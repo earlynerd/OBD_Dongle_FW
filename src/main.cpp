@@ -38,36 +38,34 @@ void loggerTask(void *pvParameter)
     vTaskDelay(1000);
   }
   vTaskDelay(500);
-  File logfile = SD.open("/logfile.csv", FILE_APPEND, true);
+  File log = SD.open("/logfile.csv", FILE_APPEND, true);
 
-  if (!logfile)
+  if (!log)
   {
     
       Serial.println("SD card unmountable. log task exit.");
     vTaskDelete(NULL);
     // task delete self. no card to log into.
   }
-  if (logfile.size() == 0)
+  if (log.size() == 0)
   {
-    logfile.printf("frame count,milliseconds,format,type,Message ID,DLC,Data\r\n");
+    log.printf("frame count,milliseconds,format,type,Message ID,DLC,Data\r\n");
   }
   
     Serial.println("SD init Success, logfile open.");
-  snprintf(buf, 256, "Card size: %lluB, type %u, used %lluB, log size%lu\r\n", SD.cardSize(), SD.cardType(), SD.usedBytes(), logfile.size());
+  snprintf(buf, 256, "Card size: %lluB, type %u, used %lluB, log size %luB\r\n", SD.cardSize(), SD.cardType(), SD.usedBytes(), log.size());
   
     Serial.print(buf);
-    logfile.flush();
-  //log.close();
+  log.close();
 
   while (1)
   {
-    //File logfile = SD.open("/logfile.csv", FILE_APPEND);
     if (xQueueReceive(loggerqueue, &rx_frame, portMAX_DELAY) == pdTRUE)
     {
-      
+      File logfile = SD.open("/logfile.csv", FILE_APPEND);
       messagecounter++;
       logfile.printf("%lu,%lu,", messagecounter, millis());
-  
+
       if (rx_frame.FIR.B.FF == CAN_frame_std)
       {
         logfile.printf("standard,");
@@ -89,7 +87,7 @@ void loggerTask(void *pvParameter)
         }
         logfile.printf("\r\n");
       }
-      logfile.flush();
+      logfile.close();
     }
   }
 }
@@ -163,7 +161,8 @@ void canRxTask(void *pvParameter)
 
 void setup()
 {
-  Serial.begin(1000000);
+  delay(1000);
+  Serial.begin(460800);
   
     Serial.println("CAN Bus Logger");
   pinMode(CAN_SLNT, OUTPUT);
@@ -181,11 +180,11 @@ void setup()
       Serial.println("CAN bus initialized.");
 
   loggerqueue = xQueueCreate(rx_queue_size, sizeof(CAN_frame_t));
-  xTaskCreate(loggerTask, "logger task", 40000, nullptr, 1, &loggingtask);
-  xTaskCreate(canRxTask, "canbus Rx task", 40000, nullptr, 1, &canbustask);
+  xTaskCreate(loggerTask, "logger task", 40000, nullptr, 3, &loggingtask);
+  xTaskCreate(canRxTask, "canbus Rx task", 40000, nullptr, 3, &canbustask);
 }
 
 void loop()
 {
-  vTaskDelete(NULL);
+  vTaskDelay(10000);
 }
