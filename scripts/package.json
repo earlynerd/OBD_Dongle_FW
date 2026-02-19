@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "claude-code-share": "^0.1.9"
+  }
+}
