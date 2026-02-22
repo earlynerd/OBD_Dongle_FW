@@ -231,9 +231,10 @@ CM_ BO_ 1573 "IPDM feedback - lights, wipers, AC compressor";
 
 CM_ SG_ 372 ATGear "7AT: 1-7=gears, 9=Reverse, 10=Park";
 CM_ SG_ 640 Seatbelt "Inverted: 0=buckled, 1=unbuckled";
-CM_ SG_ 658 LatAccel "Unsigned 12-bit with -2048 offset; near zero when driving straight";
-CM_ SG_ 658 Yaw "Unsigned 12-bit with -2048 offset; negative=turning right";
-CM_ SG_ 658 BrakePres "0 when released, ~25 when stopped, 6-8 during light braking";
+CM_ SG_ 658 LatAccel "Unsigned 12-bit with -2048 offset; near zero when driving straight. Frame FF FF FF FF FF FE FF 00 observed as invalid sentinel.";
+CM_ SG_ 658 Yaw "Unsigned 12-bit with -2048 offset; negative=turning right. Frame FF FF FF FF FF FE FF 00 observed as invalid sentinel.";
+CM_ SG_ 658 BrakePres "0 when released, ~25 when stopped, 6-8 during light braking. FF in sentinel frame should be treated invalid.";
+CM_ SG_ 853 Speed2 "Secondary speed channel; raw 0xFFFF observed in logs as invalid sentinel.";
 CM_ SG_ 852 VDCOff "VDC system disabled by driver";
 CM_ SG_ 1057 Shifter "6MT: 16=R,24=N,128=1,136=2,144=3,152=4,160=5,168=6; 7AT: 8=P,16=R,24=N,32=D";
 CM_ SG_ 1355 HVACMode "0=off, 1=face, 2=face+feet, 3=feet, 4=feet+defrost, 5=defrost";

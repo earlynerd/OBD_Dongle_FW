@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include <math.h>
+#include <string.h>
 #include "display.h"
 #include "can_signals_370z.h"
 
@@ -252,6 +254,28 @@ float extract_signal(const uint8_t *data, uint8_t dlc, const can_signal_t &sig)
         }
     }
 
+    // Known invalid/sentinel encodings from field logs.
+    // 0x355 Speed2 occasionally reports 0xFFFF (invalid reading).
+    if (strcmp(sig.name, "Speed2") == 0 && sig.start_byte + 1 < dlc)
+    {
+        if (data[sig.start_byte] == 0xFF && data[sig.start_byte + 1] == 0xFF)
+        {
+            return NAN;
+        }
+    }
+
+    // 0x292 IMU sometimes emits FF FF FF FF FF FE FF 00 as invalid payload.
+    if ((strcmp(sig.name, "LatAccel") == 0 || strcmp(sig.name, "Yaw") == 0 || strcmp(sig.name, "BrakePres") == 0) &&
+        dlc >= 8)
+    {
+        if (data[0] == 0xFF && data[1] == 0xFF && data[2] == 0xFF &&
+            data[3] == 0xFF && data[4] == 0xFF && data[5] == 0xFE &&
+            data[6] == 0xFF && data[7] == 0x00)
+        {
+            return NAN;
+        }
+    }
+
     return raw * sig.scale + sig.offset;
 }
 
@@ -260,6 +284,12 @@ bool signal_changed(const uint8_t *old_data, const uint8_t *new_data,
 {
     float old_val = extract_signal(old_data, old_dlc, sig);
     float new_val = extract_signal(new_data, new_dlc, sig);
+
+    // Ignore invalid new values; transition from invalid->valid should be emitted.
+    if (isnan(new_val))
+        return false;
+    if (isnan(old_val))
+        return true;
 
     // For booleans, exact comparison
     if (sig.type == SIG_BOOL)
@@ -308,6 +338,10 @@ void print_decoded(const can_msg_t &msg, const uint8_t *old_data,
         }
 
         float val = extract_signal(f.data.u8, f.FIR.B.DLC, sig);
+        if (isnan(val))
+        {
+            continue;
+        }
         any_changed = true;
 
         if (sig.type == SIG_BOOL)

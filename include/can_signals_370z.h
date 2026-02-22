@@ -136,6 +136,7 @@ static const can_signal_t signals_285[] = {
 //   Byte 5: 0xFE constant
 //   Byte 6: Brake pressure (0-29 observed, increases during braking)
 //   Byte 7: 0x00 constant
+//   Invalid sentinel frame seen in logs: FF FF FF FF FF FE FF 00 (discard)
 static const can_signal_t signals_292[] = {
     {"LatAccel",      1, 0xFF, 12, SIG_UINT12_BE_LOW, 1.0f, -2048.0f, ""},  // B,C: lateral accel (low nibble B + full C)
     {"Yaw",           3, 0xFF, 12, SIG_UINT12_BE,     1.0f, -2048.0f, ""},  // D,E: yaw rate (full D + high nibble E)
@@ -170,7 +171,7 @@ static const can_signal_t signals_354[] = {
 // 0x355 - Speed/Units
 static const can_signal_t signals_355[] = {
     {"Speed1",        0, 0xFF, 16, SIG_UINT16,   0.00621f,0.0f, "mph"},  // A,B
-    {"Speed2",        2, 0xFF, 16, SIG_UINT16,   0.00621f,0.0f, "mph"},  // C,D
+    {"Speed2",        2, 0xFF, 16, SIG_UINT16,   0.00621f,0.0f, "mph"},  // C,D (0xFFFF observed as invalid sentinel)
     {"Units",         4,    5,  1, SIG_BOOL,     1.0f,    0.0f, ""},     // E bit 5: 0=Metric, 1=English
 };
 

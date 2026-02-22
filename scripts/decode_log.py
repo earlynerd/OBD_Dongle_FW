@@ -261,8 +261,11 @@ def parse_data_bytes(data_str: str) -> bytes:
     return bytes.fromhex(data_str)
 
 
-def extract_signal(data: bytes, sig: Signal) -> float:
-    """Extract a signal value from CAN data bytes."""
+def extract_signal(data: bytes, sig: Signal, can_id: Optional[int] = None) -> Optional[float]:
+    """Extract a signal value from CAN data bytes.
+
+    Returns None for known invalid/sentinel encodings.
+    """
     if len(data) <= sig.start_byte:
         return 0.0
 
@@ -351,11 +354,32 @@ def extract_signal(data: bytes, sig: Signal) -> float:
             raw = ((data[sig.start_byte] >> sig.start_bit) & mask_first) | \
                   ((data[sig.start_byte + 1] & mask_second) << bits_in_first)
 
+    # Known invalid/sentinel values from field logs:
+    # - 0x355 Speed2 sometimes transmits 0xFFFF (invalid)
+    if can_id == 0x355 and sig.name == "Speed2" and sig.start_byte + 1 < len(data):
+        if data[sig.start_byte] == 0xFF and data[sig.start_byte + 1] == 0xFF:
+            return None
+
+    # - 0x292 occasionally carries an all-ones invalid IMU frame:
+    #   FF FF FF FF FF FE FF 00
+    if can_id == 0x292 and len(data) >= 8:
+        if data[0] == 0xFF and data[1] == 0xFF and data[2] == 0xFF and \
+           data[3] == 0xFF and data[4] == 0xFF and data[5] == 0xFE and \
+           data[6] == 0xFF and data[7] == 0x00:
+            if sig.name in ("LatAccel", "Yaw", "BrakePres"):
+                return None
+
     return raw * sig.scale + sig.offset
 
 
-def signal_changed(old_val: float, new_val: float, sig: Signal) -> bool:
+def signal_changed(old_val: Optional[float], new_val: Optional[float], sig: Signal) -> bool:
     """Check if a signal value has changed."""
+    # Treat missing/invalid new values as "no decoded update"
+    if new_val is None:
+        return False
+    if old_val is None:
+        return True
+
     if sig.sig_type == SIG_BOOL:
         return (old_val != 0) != (new_val != 0)
     else:
@@ -402,7 +426,9 @@ def decode_frame(can_id: int, data: bytes) -> Optional[Dict[str, float]]:
 
     result = {}
     for sig in msg.signals:
-        result[sig.name] = extract_signal(data, sig)
+        val = extract_signal(data, sig, can_id)
+        if val is not None:
+            result[sig.name] = val
     return result
 
 
@@ -419,7 +445,9 @@ def decode_frame_str(can_id: int, data: bytes, changed_signals: Optional[Set[str
 
     parts = [f"{msg.name}:"]
     for sig in msg.signals:
-        val = extract_signal(data, sig)
+        val = extract_signal(data, sig, can_id)
+        if val is None:
+            continue
         formatted = format_value(val, sig)
 
         # Mark changed signals with asterisk
@@ -427,6 +455,9 @@ def decode_frame_str(can_id: int, data: bytes, changed_signals: Optional[Set[str
             parts.append(f"*{sig.name}={formatted}")
         else:
             parts.append(f"{sig.name}={formatted}")
+
+    if len(parts) == 1:
+        return f"{msg.name}: [invalid/sentinel]"
 
     # If raw data changed but no decoded signals changed, show the hex delta
     if show_raw_changes and prev_data is not None and (changed_signals is None or len(changed_signals) == 0):
@@ -537,13 +568,24 @@ def collect_plot_data(input_file: str, signal_specs: List[str]) -> Dict[str, Tup
 
     with open(input_file, 'r') as f:
         reader = csv.DictReader(f)
+        prev_seq: Optional[int] = None
+        session_id = 0
 
         for row in reader:
             try:
+                seq = int(row['seq'])
                 timestamp = int(row['timestamp_ms'])
                 can_id = int(row['id'], 16)
                 data_str = row.get('data', '')
             except (KeyError, ValueError):
+                continue
+
+            # Detect session boundaries from seq counter resets.
+            if prev_seq is not None and seq <= prev_seq:
+                session_id += 1
+            prev_seq = seq
+
+            if COLLECT_SESSION is not None and session_id != COLLECT_SESSION:
                 continue
 
             if data_str:
@@ -560,7 +602,9 @@ def collect_plot_data(input_file: str, signal_specs: List[str]) -> Dict[str, Tup
                 key = (can_id, sig.name)
                 if key in signal_lookup:
                     display_name, _ = signal_lookup[key]
-                    value = extract_signal(data, sig)
+                    value = extract_signal(data, sig, can_id)
+                    if value is None:
+                        continue
 
                     # Convert timestamp to seconds
                     time_sec = timestamp / 1000.0
@@ -569,6 +613,10 @@ def collect_plot_data(input_file: str, signal_specs: List[str]) -> Dict[str, Tup
                     plot_data[display_name][1].append(value)
 
     return plot_data
+
+
+# Optional session filter used by collect_plot_data/plot path.
+COLLECT_SESSION: Optional[int] = None
 
 
 def plot_signals(plot_data: Dict[str, Tuple[List[float], List[float], str]],
@@ -678,7 +726,7 @@ def plot_signals(plot_data: Dict[str, Tuple[List[float], List[float], str]],
 
 def process_log(input_file: str, output_file: Optional[str] = None,
                 filter_id: Optional[int] = None, delta_mode: bool = False,
-                raw_mode: bool = False):
+                raw_mode: bool = False, session_filter: Optional[int] = None):
     """Process a CAN log file."""
 
     # Track both decoded values and raw data for delta comparison
@@ -689,6 +737,8 @@ def process_log(input_file: str, output_file: Optional[str] = None,
 
     with open(input_file, 'r') as f:
         reader = csv.DictReader(f)
+        prev_seq: Optional[int] = None
+        session_id = 0
 
         for row in reader:
             # Parse row
@@ -699,6 +749,14 @@ def process_log(input_file: str, output_file: Optional[str] = None,
                 dlc = int(row['dlc'])
                 data_str = row.get('data', '')
             except (KeyError, ValueError) as e:
+                continue
+
+            # Detect new capture session when seq counter restarts.
+            if prev_seq is not None and seq <= prev_seq:
+                session_id += 1
+            prev_seq = seq
+
+            if session_filter is not None and session_id != session_filter:
                 continue
 
             # Filter
@@ -784,6 +842,7 @@ def process_log(input_file: str, output_file: Optional[str] = None,
             if output_file:
                 output_rows.append({
                     'seq': seq,
+                    'session': session_id,
                     'timestamp_ms': timestamp,
                     'id': f"0x{can_id:03X}",
                     'decoded': decoded_str,
@@ -798,9 +857,9 @@ def process_log(input_file: str, output_file: Optional[str] = None,
         all_signals = set()
         for row in output_rows:
             all_signals.update(k for k in row.keys()
-                             if k not in ('seq', 'timestamp_ms', 'id', 'decoded'))
+                             if k not in ('seq', 'session', 'timestamp_ms', 'id', 'decoded'))
 
-        fieldnames = ['seq', 'timestamp_ms', 'id', 'decoded'] + sorted(all_signals)
+        fieldnames = ['seq', 'session', 'timestamp_ms', 'id', 'decoded'] + sorted(all_signals)
 
         with open(output_file, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
@@ -818,6 +877,8 @@ def main():
 Examples:
   %(prog)s canlog.csv                         Print decoded output
   %(prog)s canlog.csv --delta                 Only show changes
+  %(prog)s canlog.csv --list-sessions         Show detected trip/session boundaries
+  %(prog)s canlog.csv --session 1 --plot RPM,Speed
   %(prog)s canlog.csv --plot RPM,Speed        Plot RPM and Speed over time
   %(prog)s canlog.csv --plot ECM1.RPM         Plot specific signal source
   %(prog)s canlog.csv --plot RPM --subplots   Separate subplot per signal
@@ -840,8 +901,45 @@ Examples:
                        help='Plot signals over time (comma-separated, e.g., RPM,Speed,Throttle)')
     parser.add_argument('--subplots', action='store_true',
                        help='Use separate subplot for each signal (with --plot)')
+    parser.add_argument('--session', type=int,
+                       help='Only process one session index (0-based), detected from seq resets')
+    parser.add_argument('--list-sessions', action='store_true',
+                       help='List detected sessions from seq counter resets and exit')
 
     args = parser.parse_args()
+
+    if args.list_sessions:
+        if not args.input:
+            parser.error("Input file is required for --list-sessions")
+        sessions: Dict[int, Dict[str, int]] = {}
+        with open(args.input, 'r') as f:
+            reader = csv.DictReader(f)
+            prev_seq: Optional[int] = None
+            session_id = 0
+            for row in reader:
+                try:
+                    seq = int(row['seq'])
+                    ts = int(row['timestamp_ms'])
+                except (KeyError, ValueError):
+                    continue
+                if prev_seq is not None and seq <= prev_seq:
+                    session_id += 1
+                prev_seq = seq
+                s = sessions.setdefault(session_id, {"rows": 0, "seq_start": seq, "seq_end": seq,
+                                                     "ts_start": ts, "ts_end": ts})
+                s["rows"] += 1
+                s["seq_end"] = seq
+                s["ts_end"] = ts
+
+        print("Detected sessions (0-based):")
+        print("-" * 72)
+        for sid in sorted(sessions.keys()):
+            s = sessions[sid]
+            dur_s = (s["ts_end"] - s["ts_start"]) / 1000.0
+            print(f"  session={sid:2d} rows={s['rows']:8d} "
+                  f"seq={s['seq_start']}..{s['seq_end']} "
+                  f"time_ms={s['ts_start']}..{s['ts_end']} ({dur_s:.1f}s)")
+        return
 
     if args.list_ids:
         print("Known CAN IDs:")
@@ -889,12 +987,14 @@ Examples:
             print("Install with: pip install matplotlib", file=sys.stderr)
             sys.exit(1)
 
+        global COLLECT_SESSION
+        COLLECT_SESSION = args.session
         signal_specs = [s.strip() for s in args.plot.split(',')]
         plot_data = collect_plot_data(args.input, signal_specs)
         plot_signals(plot_data, subplots=args.subplots, output_file=args.output)
         return
 
-    process_log(args.input, args.output, args.filter, args.delta, args.raw)
+    process_log(args.input, args.output, args.filter, args.delta, args.raw, args.session)
 
 
 if __name__ == '__main__':
