@@ -1,0 +1,246 @@
+VERSION ""
+
+NS_ :
+
+BS_:
+
+BU_: ABS BCM ECM HVAC IPDM M_A STALK STRG TCM
+
+
+BO_ 2 STRG: 5 STRG
+ SG_ SteerAngle : 0|16@1- (0.1,0) [-3276.8|3276.7] "deg" Vector__XXX
+ SG_ SteerVel : 23|8@0+ (4,0) [0|1020] "d/s" Vector__XXX
+
+BO_ 348 GAS: 8 ECM
+ SG_ GasPedal : 47|10@0+ (0.1,0) [0|102.3] "%" Vector__XXX
+
+BO_ 352 THROT: 7 ECM
+ SG_ Pedal1 : 31|10@0+ (8,0) [0|127.875] "%" Vector__XXX
+ SG_ WOT : 37|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ThrottleClosed : 35|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 372 TCM: 8 TCM
+ SG_ ATGear : 24|4@1+ (1,0) [0|15] "" Vector__XXX
+
+BO_ 384 ECM1: 8 ECM
+ SG_ RPM : 7|16@0+ (0.125,0) [0|8191.88] "rpm" Vector__XXX
+ SG_ Pedal : 47|10@0+ (8,0) [0|127.875] "%" Vector__XXX
+ SG_ Clutch : 58|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ClutchFull : 56|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 386 ECM2: 8 ECM
+ SG_ ThrottleClosed : 15|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Throttle : 39|8@0+ (0.392,0) [0|99.96] "%" Vector__XXX
+ SG_ BrakeLight : 54|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 505 ECM_AC: 8 ECM
+ SG_ ACReq : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ RPM : 23|16@0+ (0.125,0) [0|8191.88] "rpm" Vector__XXX
+ SG_ IgnRun : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ IgnStart : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 523 CRUIS: 6 STALK
+ SG_ CruiseMain : 8|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ CruiseCancel : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ CruiseDist : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ CruiseSet : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ CruiseRes : 12|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ NoButton : 13|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ GasOff : 20|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ BrakeOn : 21|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 533 HVAC: 6 HVAC
+ SG_ AC : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ACComp : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 534 IPDM: 2 IPDM
+ SG_ IgnBtn : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ IgnON : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Hood : 13|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ClutchFull : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 640 SEAT: 8 M_A
+ SG_ Seatbelt : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Speed : 39|16@0+ (0.00621,0) [0|406.972] "mph" Vector__XXX
+
+BO_ 644 ABS_F: 8 ABS
+ SG_ WheelFR : 7|16@0+ (0.00311,0) [0|203.814] "mph" Vector__XXX
+ SG_ WheelFL : 23|16@0+ (0.00311,0) [0|203.814] "mph" Vector__XXX
+ SG_ Speed : 39|16@0+ (0.00621,0) [0|406.972] "mph" Vector__XXX
+
+BO_ 645 ABS_R: 8 ABS
+ SG_ WheelRR : 7|16@0+ (0.00311,0) [0|203.814] "mph" Vector__XXX
+ SG_ WheelRL : 23|16@0+ (0.00311,0) [0|203.814] "mph" Vector__XXX
+
+BO_ 658 IMU: 8 ABS
+ SG_ LatAccel : 11|12@0+ (1,-2048) [-2048|2047] "" Vector__XXX
+ SG_ Yaw : 31|12@0+ (1,-2048) [-2048|2047] "" Vector__XXX
+ SG_ BrakePres : 55|8@0+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 768 STRTQ: 2 STRG
+ SG_ SteerTorque : 6|7@0+ (1,0) [0|127] "" Vector__XXX
+ SG_ SteerPressed : 15|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 849 KEY: 8 BCM
+ SG_ KeyPresent : 42|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ClutchFull : 58|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 852 VDC: 8 ABS
+ SG_ Speed : 7|16@0+ (0.00621,0) [0|406.972] "mph" Vector__XXX
+ SG_ VDC : 38|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ VDCOff : 47|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Brake : 52|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ VDCWarn : 48|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 853 SPEED: 7 ABS
+ SG_ Speed1 : 7|16@0+ (0.00621,0) [0|406.972] "mph" Vector__XXX
+ SG_ Speed2 : 23|16@0+ (0.00621,0) [0|406.972] "mph" Vector__XXX
+ SG_ Units : 37|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 856 BCM1: 8 BCM
+ SG_ KeySlot : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Stopped : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Headlights : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Trunk : 53|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 861 BCM2: 8 BCM
+ SG_ WiperCont : 23|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ WiperOn : 22|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ WiperFast : 21|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Forward : 38|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Brake : 36|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 901 TPMS: 7 BCM
+ SG_ Tire1 : 23|8@0+ (0.25,0) [0|63.75] "psi" Vector__XXX
+ SG_ Tire2 : 31|8@0+ (0.25,0) [0|63.75] "psi" Vector__XXX
+ SG_ Tire3 : 39|8@0+ (0.25,0) [0|63.75] "psi" Vector__XXX
+ SG_ Tire4 : 47|8@0+ (0.25,0) [0|63.75] "psi" Vector__XXX
+ SG_ Tire1Valid : 55|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Tire2Valid : 54|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Tire3Valid : 53|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Tire4Valid : 52|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1055 GBOX: 2 TCM
+ SG_ GearPos : 3|3@1+ (1,0) [0|7] "" Vector__XXX
+ SG_ SportsMode : 13|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1057 GEAR: 3 ECM
+ SG_ Shifter : 7|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ SMode : 14|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1107 LIGHT: 8 BCM
+ SG_ Headlights : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ TurnL : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ TurnR : 12|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1273 HUD: 7 M_A
+ SG_ SpeedMPH : 5|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ SeatbeltDrv : 25|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1346 HVTMP: 8 HVAC
+ SG_ TempDrv : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ TempPass : 23|8@0+ (1,0) [0|255] "" Vector__XXX
+
+BO_ 1355 HVCTL: 8 HVAC
+ SG_ HVACOff : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ HVACMode : 19|3@1+ (1,0) [0|7] "" Vector__XXX
+ SG_ RecircOn : 24|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ RecircOff : 25|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ FanLevel : 35|3@1+ (1,0) [0|7] "" Vector__XXX
+
+BO_ 1356 HVAC2: 8 HVAC
+ SG_ EvapTemp : 7|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ EvapTarget : 15|8@0+ (1,0) [0|255] "" Vector__XXX
+ SG_ ACStatus : 23|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Blower : 22|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Recirc : 56|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1361 COOL: 8 ECM
+ SG_ Coolant : 7|8@0+ (1,-40) [-40|215] "C" Vector__XXX
+ SG_ FuelCons : 15|8@0+ (1,0) [0|255] "mm3" Vector__XXX
+ SG_ CruiseSpd : 39|8@0+ (0.621,0) [0|158.355] "mph" Vector__XXX
+ SG_ CruiseMaster : 46|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ CruiseActive : 44|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1408 OIL2: 8 ECM
+ SG_ OilTemp : 39|8@0+ (1,-40) [-40|215] "C" Vector__XXX
+
+BO_ 1477 M_A: 8 M_A
+ SG_ Hazard : 6|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ParkBrake : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Odometer : 15|24@0+ (1,0) [0|16777215] "mi" Vector__XXX
+ SG_ SModeBtn : 32|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1549 BCM3: 8 BCM
+ SG_ Trunk : 7|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ PassDoor : 4|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ DrvDoor : 3|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Running : 2|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ Headlights : 1|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ TurnR : 14|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ TurnL : 13|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ HighBeam : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ IgnON : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ IgnACC : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ DrvLock : 20|1@1+ (1,0) [0|1] "" Vector__XXX
+
+BO_ 1573 IPDM2: 8 IPDM
+ SG_ Defogger : 0|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ ACCompFB : 15|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ RunningFB : 14|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ LowBeamFB : 13|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ HighBeamFB : 12|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ WiperFast : 11|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ WiperSlow : 10|1@1+ (1,0) [0|1] "" Vector__XXX
+ SG_ WiperHome : 9|1@1+ (1,0) [0|1] "" Vector__XXX
+
+
+CM_ BO_ 2 "Steering angle sensor - angle and angular velocity";
+CM_ BO_ 348 "Gas pedal position (G37 DBC, verify on 370Z)";
+CM_ BO_ 352 "Throttle/pedal - accelerator and WOT detection";
+CM_ BO_ 372 "TCM gear position (7AT automatic transmission only)";
+CM_ BO_ 384 "ECM primary - RPM, pedal position, clutch";
+CM_ BO_ 386 "ECM secondary - throttle position, brake light";
+CM_ BO_ 505 "ECM AC request and ignition status";
+CM_ BO_ 523 "Cruise control stalk buttons (G37 DBC)";
+CM_ BO_ 533 "HVAC - AC request";
+CM_ BO_ 534 "IPDM - ignition, hood, clutch";
+CM_ BO_ 640 "Seatbelt and vehicle speed";
+CM_ BO_ 644 "ABS front wheel speeds and vehicle speed";
+CM_ BO_ 645 "ABS rear wheel speeds";
+CM_ BO_ 658 "IMU - yaw rate, lateral acceleration, brake pressure";
+CM_ BO_ 768 "Steering torque sensor (G37 DBC)";
+CM_ BO_ 849 "Key/clutch/button status";
+CM_ BO_ 852 "ABS/VDC - vehicle speed, VDC status, brake";
+CM_ BO_ 853 "Vehicle speed (dual) and unit setting";
+CM_ BO_ 856 "BCM - key slot, headlights, stopped, trunk";
+CM_ BO_ 861 "BCM - wipers, forward gear, brake pedal";
+CM_ BO_ 901 "TPMS - tire pressures and validity";
+CM_ BO_ 1055 "Gearbox position and sports mode (G37 DBC)";
+CM_ BO_ 1057 "Shifter position and S-Mode (6MT and 7AT)";
+CM_ BO_ 1107 "Lights and blinkers (G37 DBC)";
+CM_ BO_ 1273 "HUD speed display and seatbelt (G37 DBC)";
+CM_ BO_ 1346 "HVAC temperature settings (G37 DBC)";
+CM_ BO_ 1355 "HVAC controls - mode, fan, recirculate (G37 DBC)";
+CM_ BO_ 1356 "HVAC evaporator and AC status";
+CM_ BO_ 1361 "Coolant temp, fuel consumption, cruise control";
+CM_ BO_ 1408 "Oil temperature (alternate source)";
+CM_ BO_ 1477 "Odometer, hazards, parking brake, S-Mode button";
+CM_ BO_ 1549 "BCM doors, lights, locks, ignition";
+CM_ BO_ 1573 "IPDM feedback - lights, wipers, AC compressor";
+
+CM_ SG_ 372 ATGear "7AT: 1-7=gears, 9=Reverse, 10=Park";
+CM_ SG_ 640 Seatbelt "Inverted: 0=buckled, 1=unbuckled";
+CM_ SG_ 658 LatAccel "Unsigned 12-bit with -2048 offset; near zero when driving straight";
+CM_ SG_ 658 Yaw "Unsigned 12-bit with -2048 offset; negative=turning right";
+CM_ SG_ 658 BrakePres "0 when released, ~25 when stopped, 6-8 during light braking";
+CM_ SG_ 852 VDCOff "VDC system disabled by driver";
+CM_ SG_ 1057 Shifter "6MT: 16=R,24=N,128=1,136=2,144=3,152=4,160=5,168=6; 7AT: 8=P,16=R,24=N,32=D";
+CM_ SG_ 1355 HVACMode "0=off, 1=face, 2=face+feet, 3=feet, 4=feet+defrost, 5=defrost";
+CM_ SG_ 1361 CruiseSpd "255=off, 254=on but no speed set, else speed in km/h";
+CM_ SG_ 1361 Coolant "Raw value minus 40 = temperature in Celsius";
+
+VAL_ 372 ATGear 1 "1st" 2 "2nd" 3 "3rd" 4 "4th" 5 "5th" 6 "6th" 7 "7th" 9 "Reverse" 10 "Park" ;
+VAL_ 1057 Shifter 8 "Park" 16 "Reverse" 24 "Neutral" 32 "Drive" 128 "1st" 136 "2nd" 144 "3rd" 152 "4th" 160 "5th" 168 "6th" ;
+VAL_ 1355 HVACMode 0 "Off" 1 "Face" 2 "Face+Feet" 3 "Feet" 4 "Feet+Defrost" 5 "Defrost" ;
+VAL_ 1055 GearPos 0 "Park" 1 "Reverse" 2 "Neutral" 3 "Drive" 4 "Sport" ;
