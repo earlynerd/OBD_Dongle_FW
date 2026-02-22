@@ -93,6 +93,31 @@ Logs are saved as CSV files in `/logs/` on the SD card.
 | `id <module>` | Get module identification string |
 | `ecm`, `bcm`, `ipdm`, `abs` | List PIDs for each module |
 
+### Hunt Mode (Button/Switch Identification)
+
+Hunt mode helps identify 1-bit CAN signals like buttons, switches, and toggles by showing bit-level changes from a captured baseline.
+
+| Command | Description |
+|---------|-------------|
+| `snapshot` | Capture baseline of all CAN IDs |
+| `hunt` | Enter hunt mode, show bit changes from snapshot |
+| `hunt sticky` | Hunt mode with persistent change display |
+| `hunt -q` | Hunt mode, suppress noisy bits (>5 changes) |
+| `mark <name>` | Label the next bit change (e.g., `mark HazardSwitch`) |
+| `hunt clear` | Clear change counters |
+| `hunt save` | Export findings to `/hunt_results.csv` on SD card |
+
+**Workflow:**
+1. With car on (engine off), run `snapshot` to capture baseline
+2. Run `hunt` to enter hunt mode
+3. Type `mark HazardSwitch` (or whatever you're about to test)
+4. Press the button or activate the switch
+5. See the labeled change: `[HUNT] 0x354 [3].5  0->1  "HazardSwitch"`
+6. Repeat steps 3-5 for other controls
+7. Run `hunt save` to export all findings with labels
+
+**Output format:** `[HUNT] 0x<CAN_ID> [<byte>].<bit>  <old>-><new>`
+
 ### Utility
 
 | Command | Description |

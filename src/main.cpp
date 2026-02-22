@@ -27,6 +27,7 @@ TaskHandle_t logger_task_h;
 TaskHandle_t cmd_task_h;
 TaskHandle_t housekeeping_task_h;
 SemaphoreHandle_t state_mutex;
+SemaphoreHandle_t tracker_mutex;
 
 // Shared state (protected by state_mutex)
 op_mode_t current_mode = MODE_DELTA;
@@ -36,18 +37,33 @@ uint32_t filter_id = 0;
 bool filter_active = false;
 bool paused = false;
 
-// Delta tracking (only accessed from dispatch task)
+// Delta tracking (protected by tracker_mutex)
 std::map<uint32_t, id_tracker_t> id_trackers;
 
-// Stats counters (atomic-ish, only written from dispatch task)
-volatile uint32_t total_frames = 0;
-volatile uint32_t dropped_frames = 0;
+// Stats counters (Atomic)
+std::atomic<uint32_t> total_frames(0);
+std::atomic<uint32_t> dropped_frames(0);
 
 // OBD2 TX state (protected by state_mutex where noted)
 bool tx_enabled = false;                    // TX mode enabled (mutex protected)
 obd2_state_t obd2_state = OBD2_IDLE;        // Response state machine
 obd2_response_t obd2_response;              // Last response received
 uint32_t obd2_request_time = 0;             // When request was sent (for timeout)
+
+// Hunt mode state
+std::map<uint32_t, hunt_snapshot_t> hunt_snapshots;  // Baseline state
+bool hunt_sticky = false;                   // Keep changes on screen (mutex protected)
+bool hunt_quiet = false;                    // Suppress noisy bits (mutex protected)
+uint32_t hunt_change_threshold = 5;         // Changes before suppression
+
+// Hunt marking system
+char hunt_pending_mark[32] = {0};           // Current pending mark label
+uint32_t hunt_mark_time = 0;                // When mark was set
+std::map<hunt_bit_key_t, String> hunt_bit_marks;  // Bit -> label associations
+
+// Noise filter state
+std::map<uint32_t, noise_filter_t> noise_filters;  // CAN ID -> filter mask
+bool noise_filter_enabled = false;          // Master enable (mutex protected)
 
 // ── CAN Receive Task ─────────────────────────────────────────────────────────
 // Highest priority: pull frames from hardware FIFO ASAP and timestamp them.
@@ -93,6 +109,12 @@ static void dispatch_task(void *pv)
         bool filt = filter_active;
         uint32_t fid = filter_id;
         bool is_paused = paused;
+        bool h_sticky = hunt_sticky;
+        bool h_quiet = hunt_quiet;
+        bool nf_enabled = noise_filter_enabled;
+        char pending_mark[32];
+        strncpy(pending_mark, hunt_pending_mark, sizeof(pending_mark));
+        uint32_t mark_time = hunt_mark_time;
         xSemaphoreGive(state_mutex);
 
         // Apply ID filter
@@ -108,7 +130,8 @@ static void dispatch_task(void *pv)
         if (is_paused)
             continue;
 
-        // Update tracker
+        // Update tracker (protected by tracker_mutex)
+        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
         id_tracker_t &trk = id_trackers[id];
         bool is_new = !trk.seen;
         bool is_change = false;
@@ -143,6 +166,12 @@ static void dispatch_task(void *pv)
             memcpy(trk.last_data, msg.frame.data.u8, msg.frame.FIR.B.DLC);
         }
 
+        // Check for Hunt mode baseline (if in hunt mode)
+        bool has_snapshot = (mode == MODE_HUNT && hunt_snapshots.count(id) && hunt_snapshots[id].captured);
+        hunt_snapshot_t* snap_ptr = has_snapshot ? &hunt_snapshots[id] : nullptr;
+        
+        xSemaphoreGive(tracker_mutex);
+
         // Check for OBD2/Consult response frames
         if (id == OBD2_ECM_RESPONSE || id == OBD2_BCM_RESPONSE ||
             find_module_by_response_id(id) != nullptr)
@@ -171,7 +200,36 @@ static void dispatch_task(void *pv)
             }
             else if (is_change)
             {
-                print_delta(msg, old_data, old_dlc);
+                // Check noise filter - suppress if change only affects masked bits
+                bool suppress = false;
+                if (nf_enabled)
+                {
+                    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                    auto nf_it = noise_filters.find(id);
+                    if (nf_it != noise_filters.end() && nf_it->second.active)
+                    {
+                        // Check if any unmasked bits changed
+                        bool unmasked_change = false;
+                        uint8_t dlc = msg.frame.FIR.B.DLC;
+                        for (int i = 0; i < dlc && i < 8; i++)
+                        {
+                            uint8_t diff = msg.frame.data.u8[i] ^ old_data[i];
+                            uint8_t unmasked_diff = diff & ~nf_it->second.mask[i];
+                            if (unmasked_diff)
+                            {
+                                unmasked_change = true;
+                                break;
+                            }
+                        }
+                        suppress = !unmasked_change;
+                    }
+                    xSemaphoreGive(tracker_mutex);
+                }
+
+                if (!suppress)
+                {
+                    print_delta(msg, old_data, old_dlc);
+                }
             }
             break;
 
@@ -182,7 +240,35 @@ static void dispatch_task(void *pv)
             }
             else if (is_change)
             {
-                print_decoded(msg, old_data, old_dlc, true);
+                // Check noise filter - suppress if change only affects masked bits
+                bool suppress = false;
+                if (nf_enabled)
+                {
+                    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                    auto nf_it = noise_filters.find(id);
+                    if (nf_it != noise_filters.end() && nf_it->second.active)
+                    {
+                        bool unmasked_change = false;
+                        uint8_t dlc = msg.frame.FIR.B.DLC;
+                        for (int i = 0; i < dlc && i < 8; i++)
+                        {
+                            uint8_t diff = msg.frame.data.u8[i] ^ old_data[i];
+                            uint8_t unmasked_diff = diff & ~nf_it->second.mask[i];
+                            if (unmasked_diff)
+                            {
+                                unmasked_change = true;
+                                break;
+                            }
+                        }
+                        suppress = !unmasked_change;
+                    }
+                    xSemaphoreGive(tracker_mutex);
+                }
+
+                if (!suppress)
+                {
+                    print_decoded(msg, old_data, old_dlc, true);
+                }
             }
             break;
 
@@ -191,6 +277,73 @@ static void dispatch_task(void *pv)
             break;
 
         case MODE_SILENT:
+            break;
+
+        case MODE_HUNT:
+            // Bit-level change detection from snapshot baseline
+            if (snap_ptr)
+            {
+                uint8_t dlc = msg.frame.FIR.B.DLC;
+
+                // Check if pending mark is still valid (within 10 seconds)
+                bool mark_valid = (pending_mark[0] != '\0') &&
+                                  (msg.timestamp_ms - mark_time < 10000);
+
+                for (int b = 0; b < dlc && b < 8; b++)
+                {
+                    uint8_t diff = snap_ptr->data[b] ^ msg.frame.data.u8[b];
+                    if (diff)
+                    {
+                        // Update change counter (needs tracker_mutex again)
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        snap_ptr->change_counts[b]++;
+                        uint32_t current_change_count = snap_ptr->change_counts[b];
+                        xSemaphoreGive(tracker_mutex);
+
+                        // Skip if quiet mode and too many changes
+                        if (h_quiet && current_change_count > hunt_change_threshold)
+                        {
+                            // Show suppression notice once (at threshold + 1)
+                            if (current_change_count == hunt_change_threshold + 1)
+                            {
+                                Serial.printf("[HUNT] 0x%03X [%d] (suppressed - noisy)\r\n", id, b);
+                            }
+                            continue;
+                        }
+
+                        // Print each changed bit
+                        for (int bit = 0; bit < 8; bit++)
+                        {
+                            if (diff & (1 << bit))
+                            {
+                                uint8_t old_bit = (snap_ptr->data[b] >> bit) & 1;
+                                uint8_t new_bit = (msg.frame.data.u8[b] >> bit) & 1;
+
+                                // Associate pending mark with this bit
+                                const char* mark_to_use = nullptr;
+                                if (mark_valid)
+                                {
+                                    hunt_bit_key_t key = {id, (uint8_t)b, (uint8_t)bit};
+                                    
+                                    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                                    hunt_bit_marks[key] = String(pending_mark);
+                                    xSemaphoreGive(tracker_mutex);
+                                    
+                                    mark_to_use = pending_mark;
+
+                                    // Clear pending mark (with mutex)
+                                    xSemaphoreTake(state_mutex, portMAX_DELAY);
+                                    hunt_pending_mark[0] = '\0';
+                                    xSemaphoreGive(state_mutex);
+                                    mark_valid = false;  // Only use mark once per mark command
+                                }
+
+                                print_hunt_change(id, b, bit, old_bit, new_bit, h_sticky, mark_to_use);
+                            }
+                        }
+                    }
+                }
+            }
             break;
         }
     }
@@ -216,9 +369,12 @@ static void housekeeping_task(void *pv)
         if (mode == MODE_STATS && (now - last_stats >= STATS_PRINT_INTERVAL))
         {
             last_stats = now;
-            Serial.printf("\r\n── Stats @ %lus ── Frames: %lu | Dropped: %lu | IDs: %d ──\r\n",
-                          now / 1000, total_frames, dropped_frames, id_trackers.size());
+            xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+            uint32_t unique_ids = id_trackers.size();
+            Serial.printf("\r\n── Stats @ %lus ── Frames: %lu | Dropped: %lu | IDs: %lu ──\r\n",
+                          now / 1000, (uint32_t)total_frames, (uint32_t)dropped_frames, unique_ids);
             print_ids();
+            xSemaphoreGive(tracker_mutex);
         }
 
         // Periodic battery voltage check
@@ -272,6 +428,7 @@ void setup()
 
     // Queues
     state_mutex = xSemaphoreCreateMutex();
+    tracker_mutex = xSemaphoreCreateMutex();
     dispatch_queue = xQueueCreate(DISPATCH_QUEUE_SIZE, sizeof(can_msg_t));
     log_queue = xQueueCreate(LOG_QUEUE_SIZE, sizeof(can_msg_t));
 

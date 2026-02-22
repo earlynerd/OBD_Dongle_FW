@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 #include <Arduino.h>
+#include <SD.h>
 #include <map>
 #include "pin_config.h"
 #include "can_types.h"
@@ -67,6 +68,23 @@ static void print_help()
     Serial.println("  id <module>  Get module identification");
     Serial.println("  <module>     List PIDs for module (ecm,bcm,etc)");
     Serial.println();
+    Serial.println(" HUNT MODE (button/switch identification):");
+    Serial.println("  snapshot     Capture baseline of all CAN IDs");
+    Serial.println("  hunt         Enter hunt mode (bit-level changes)");
+    Serial.println("  hunt sticky  Hunt mode, changes persist on screen");
+    Serial.println("  hunt -q      Hunt mode, suppress noisy bits");
+    Serial.println("  mark <name>  Label the next bit change");
+    Serial.println("  hunt clear   Clear change counters");
+    Serial.println("  hunt save    Export findings to /hunt_results.csv");
+    Serial.println();
+    Serial.println(" NOISE FILTER (suppress repetitive patterns):");
+    Serial.println("  noise        Toggle noise filter on/off");
+    Serial.println("  noise list   Show active noise filters");
+    Serial.println("  noise add <ID> <byte> <mask>  Add filter (hex)");
+    Serial.println("  noise del <ID>               Remove filter");
+    Serial.println("  noise clear  Clear all noise filters");
+    Serial.println("  noise preset Load preset filters for 370Z");
+    Serial.println();
     Serial.println(" UTILITY:");
     Serial.println("  ids          List all seen CAN IDs");
     Serial.println("  clear        Reset ID trackers");
@@ -91,7 +109,12 @@ static void print_status()
     uint32_t fid = filter_id;
     bool p = paused;
     bool tx_en = tx_enabled;
+    bool nf_en = noise_filter_enabled;
     xSemaphoreGive(state_mutex);
+
+    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+    size_t nf_count = noise_filters.size();
+    xSemaphoreGive(tracker_mutex);
 
     const char *mode_str;
     switch (mode)
@@ -111,10 +134,17 @@ static void print_status()
     case MODE_SILENT:
         mode_str = "SILENT";
         break;
+    case MODE_HUNT:
+        mode_str = "HUNT";
+        break;
     default:
         mode_str = "UNKNOWN";
         break;
     }
+
+    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+    uint32_t unique_ids = id_trackers.size();
+    xSemaphoreGive(tracker_mutex);
 
     Serial.println();
     Serial.printf("  Mode:      %s%s\r\n", mode_str, p ? " (PAUSED)" : "");
@@ -131,8 +161,9 @@ static void print_status()
         if (reason)
             Serial.printf("             (%s)\r\n", reason);
     }
-    Serial.printf("  Frames:    %lu total, %lu dropped\r\n", total_frames, dropped_frames);
-    Serial.printf("  Unique IDs: %d\r\n", id_trackers.size());
+    Serial.printf("  NoiseFltr: %s (%d filters)\r\n", nf_en ? "ON" : "OFF", nf_count);
+    Serial.printf("  Frames:    %lu total, %lu dropped\r\n", (uint32_t)total_frames, (uint32_t)dropped_frames);
+    Serial.printf("  Unique IDs: %lu\r\n", unique_ids);
     Serial.printf("  Uptime:    %lus\r\n", millis() / 1000);
     Serial.printf("  Vbat:      %.2fV\r\n", read_vbat());
     Serial.println();
@@ -142,9 +173,11 @@ static void print_status()
 
 void print_ids()
 {
+    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
     if (id_trackers.empty())
     {
         Serial.println("  No CAN IDs seen yet.");
+        xSemaphoreGive(tracker_mutex);
         return;
     }
 
@@ -169,6 +202,7 @@ void print_ids()
 
         Serial.printf("  0x%03X     %-8lu  %-8.1f  %s\r\n", id, t.msg_count, rate, data_str);
     }
+    xSemaphoreGive(tracker_mutex);
     Serial.println();
 }
 
@@ -261,6 +295,232 @@ void cmd_task(void *pv)
                         Serial.println("  → Mode: SILENT (SD logging only)");
                         save_settings();
                     }
+                    // ── Hunt Mode Commands ────────────────────────────────
+                    else if (cmd.startsWith("mark "))
+                    {
+                        // Set a mark/label for the next bit change
+                        String label = cmd.substring(5);
+                        label.trim();
+                        if (label.length() == 0)
+                        {
+                            Serial.println("  Usage: mark <label>");
+                        }
+                        else if (label.length() > 30)
+                        {
+                            Serial.println("  [!] Label too long (max 30 chars)");
+                        }
+                        else
+                        {
+                            xSemaphoreTake(state_mutex, portMAX_DELAY);
+                            strncpy(hunt_pending_mark, label.c_str(), sizeof(hunt_pending_mark) - 1);
+                            hunt_pending_mark[sizeof(hunt_pending_mark) - 1] = '\0';
+                            hunt_mark_time = millis();
+                            xSemaphoreGive(state_mutex);
+                            Serial.printf("  → Mark set: \"%s\" (activate control now)\r\n", label.c_str());
+                        }
+                    }
+                    else if (cmd == "snapshot")
+                    {
+                        // Capture current state of all CAN IDs as baseline
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        hunt_snapshots.clear();
+                        hunt_bit_marks.clear();  // Also clear mark associations
+                        for (auto &pair : id_trackers)
+                        {
+                            hunt_snapshot_t snap;
+                            memcpy(snap.data, pair.second.last_data, 8);
+                            snap.dlc = pair.second.last_dlc;
+                            memset(snap.change_counts, 0, 8);
+                            snap.captured = true;
+                            hunt_snapshots[pair.first] = snap;
+                        }
+                        size_t snap_count = hunt_snapshots.size();
+                        xSemaphoreGive(tracker_mutex);
+                        Serial.printf("  → Snapshot captured: %d CAN IDs\r\n", snap_count);
+                    }
+                    else if (cmd == "hunt sticky")
+                    {
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        bool snap_empty = hunt_snapshots.empty();
+                        xSemaphoreGive(tracker_mutex);
+                        
+                        if (snap_empty)
+                        {
+                            Serial.println("  [!] No snapshot. Run 'snapshot' first.");
+                        }
+                        else
+                        {
+                            xSemaphoreTake(state_mutex, portMAX_DELAY);
+                            current_mode = MODE_HUNT;
+                            hunt_sticky = true;
+                            hunt_quiet = false;
+                            xSemaphoreGive(state_mutex);
+                            
+                            xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                            size_t snap_count = hunt_snapshots.size();
+                            xSemaphoreGive(tracker_mutex);
+                            
+                            Serial.println("  → Mode: HUNT (sticky - changes persist)");
+                            Serial.printf("  → Comparing against %d IDs in snapshot\r\n", snap_count);
+                        }
+                    }
+                    else if (cmd == "hunt -q")
+                    {
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        bool snap_empty = hunt_snapshots.empty();
+                        xSemaphoreGive(tracker_mutex);
+
+                        if (snap_empty)
+                        {
+                            Serial.println("  [!] No snapshot. Run 'snapshot' first.");
+                        }
+                        else
+                        {
+                            xSemaphoreTake(state_mutex, portMAX_DELAY);
+                            current_mode = MODE_HUNT;
+                            hunt_sticky = false;
+                            hunt_quiet = true;
+                            xSemaphoreGive(state_mutex);
+
+                            xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                            size_t snap_count = hunt_snapshots.size();
+                            xSemaphoreGive(tracker_mutex);
+
+                            Serial.println("  → Mode: HUNT (quiet - noisy bits suppressed)");
+                            Serial.printf("  → Comparing against %d IDs in snapshot\r\n", snap_count);
+                        }
+                    }
+                    else if (cmd == "hunt save")
+                    {
+                        // Export hunt findings to CSV file on SD card
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        bool snap_empty = hunt_snapshots.empty();
+                        xSemaphoreGive(tracker_mutex);
+
+                        if (!sd_available)
+                        {
+                            Serial.println("  [!] SD card not available");
+                        }
+                        else if (snap_empty)
+                        {
+                            Serial.println("  [!] No snapshot data to save");
+                        }
+                        else
+                        {
+                            File f = SD.open("/hunt_results.csv", FILE_WRITE);
+                            if (!f)
+                            {
+                                Serial.println("  [!] Failed to create file");
+                            }
+                            else
+                            {
+                                // Header with format info for analysis
+                                f.println("# Hunt Mode Results - Bit-level CAN signal discovery");
+                                f.println("# Import into signal database: can_signals_370z.h");
+                                f.println("# Format: CAN_ID,BYTE,BIT,CHANGES,BASELINE,CURRENT,SUGGESTED_NAME");
+                                f.println("can_id,byte_idx,bit_idx,change_count,baseline_val,current_val,suggested_name");
+
+                                int bits_found = 0;
+                                
+                                xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                                for (auto &pair : hunt_snapshots)
+                                {
+                                    uint32_t can_id = pair.first;
+                                    hunt_snapshot_t &snap = pair.second;
+
+                                    // Get current data from id_trackers
+                                    uint8_t current_data[8] = {0};
+                                    uint8_t current_dlc = 0;
+                                    if (id_trackers.count(can_id))
+                                    {
+                                        memcpy(current_data, id_trackers[can_id].last_data, 8);
+                                        current_dlc = id_trackers[can_id].last_dlc;
+                                    }
+
+                                    // Check each byte that had changes
+                                    for (int b = 0; b < snap.dlc && b < 8; b++)
+                                    {
+                                        if (snap.change_counts[b] > 0)
+                                        {
+                                            // Find which bits changed by XOR
+                                            uint8_t diff = snap.data[b] ^ current_data[b];
+                                            for (int bit = 0; bit < 8; bit++)
+                                            {
+                                                // Report bits that differ from baseline
+                                                // or bytes with any change activity
+                                                uint8_t baseline_bit = (snap.data[b] >> bit) & 1;
+                                                uint8_t current_bit = (current_data[b] >> bit) & 1;
+
+                                                if (diff & (1 << bit))
+                                                {
+                                                    // Check for user-provided mark
+                                                    hunt_bit_key_t key = {can_id, (uint8_t)b, (uint8_t)bit};
+                                                    const char* name;
+                                                    char auto_name[32];
+
+                                                    if (hunt_bit_marks.count(key) && hunt_bit_marks[key].length() > 0)
+                                                    {
+                                                        name = hunt_bit_marks[key].c_str();
+                                                    }
+                                                    else
+                                                    {
+                                                        // Generate auto name
+                                                        snprintf(auto_name, sizeof(auto_name), "ID%03X_B%d_%d",
+                                                                 can_id, b, bit);
+                                                        name = auto_name;
+                                                    }
+
+                                                    f.printf("0x%03X,%d,%d,%d,%d,%d,%s\n",
+                                                             can_id, b, bit,
+                                                             snap.change_counts[b],
+                                                             baseline_bit, current_bit, name);
+                                                    bits_found++;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                xSemaphoreGive(tracker_mutex);
+
+                                f.close();
+                                Serial.printf("  → Saved %d changed bits to /hunt_results.csv\r\n", bits_found);
+                                Serial.println("  → Copy file from SD card for analysis");
+                            }
+                        }
+                    }
+                    else if (cmd == "hunt clear")
+                    {
+                        // Clear change counters but stay in hunt mode
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        for (auto &pair : hunt_snapshots)
+                        {
+                            memset(pair.second.change_counts, 0, 8);
+                        }
+                        xSemaphoreGive(tracker_mutex);
+                        Serial.println("  → Hunt change counters cleared");
+                    }
+                    else if (cmd == "hunt")
+                    {
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        bool snap_empty = hunt_snapshots.empty();
+                        size_t snap_count = hunt_snapshots.size();
+                        xSemaphoreGive(tracker_mutex);
+
+                        if (snap_empty)
+                        {
+                            Serial.println("  [!] No snapshot. Run 'snapshot' first.");
+                        }
+                        else
+                        {
+                            xSemaphoreTake(state_mutex, portMAX_DELAY);
+                            current_mode = MODE_HUNT;
+                            hunt_sticky = false;
+                            hunt_quiet = false;
+                            xSemaphoreGive(state_mutex);
+                            Serial.println("  → Mode: HUNT (bit-level changes from snapshot)");
+                            Serial.printf("  → Comparing against %d IDs in snapshot\r\n", snap_count);
+                        }
+                    }
                     else if (cmd.startsWith("filter "))
                     {
                         String id_str = cmd.substring(7);
@@ -304,7 +564,9 @@ void cmd_task(void *pv)
                     }
                     else if (cmd == "clear")
                     {
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
                         id_trackers.clear();
+                        xSemaphoreGive(tracker_mutex);
                         total_frames = 0;
                         dropped_frames = 0;
                         Serial.println("  → Trackers and counters cleared.");
@@ -779,6 +1041,229 @@ void cmd_task(void *pv)
                                           abs_pids[i].pid, abs_pids[i].name, abs_pids[i].unit);
                         }
                         Serial.println();
+                    }
+                    // ── Noise Filter Commands ─────────────────────────────────
+                    else if (cmd == "noise")
+                    {
+                        xSemaphoreTake(state_mutex, portMAX_DELAY);
+                        noise_filter_enabled = !noise_filter_enabled;
+                        bool state = noise_filter_enabled;
+                        xSemaphoreGive(state_mutex);
+                        Serial.printf("  -> Noise filter: %s\r\n", state ? "ON" : "OFF");
+                    }
+                    else if (cmd == "noise list")
+                    {
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        if (noise_filters.empty())
+                        {
+                            Serial.println("  No noise filters configured.");
+                        }
+                        else
+                        {
+                            Serial.println();
+                            Serial.println("  ID      Byte masks (FF=ignore all bits)");
+                            Serial.println("  ──────  ──────────────────────────────────");
+                            for (auto &pair : noise_filters)
+                            {
+                                if (pair.second.active)
+                                {
+                                    Serial.printf("  0x%03X   ", pair.first);
+                                    for (int i = 0; i < 8; i++)
+                                    {
+                                        if (pair.second.mask[i])
+                                            Serial.printf("%02X ", pair.second.mask[i]);
+                                        else
+                                            Serial.print("-- ");
+                                    }
+                                    Serial.println();
+                                }
+                            }
+                        }
+                        xSemaphoreGive(tracker_mutex);
+                        Serial.println();
+                    }
+                    else if (cmd.startsWith("noise add "))
+                    {
+                        // Parse "noise add <ID> <byte> <mask>" or "noise add <ID> <mask0> <mask1>..."
+                        String args = cmd.substring(10);
+                        args.trim();
+
+                        // Parse CAN ID
+                        int space = args.indexOf(' ');
+                        if (space < 0)
+                        {
+                            Serial.println("  Usage: noise add <ID> <byte> <mask>");
+                            Serial.println("     or: noise add <ID> <m0> <m1> ... <m7>");
+                        }
+                        else
+                        {
+                            String id_str = args.substring(0, space);
+                            String rest = args.substring(space + 1);
+                            rest.trim();
+
+                            uint32_t can_id = strtoul(id_str.c_str(), NULL, 16);
+
+                            // Check if it's byte+mask or full mask list
+                            int space2 = rest.indexOf(' ');
+                            if (space2 < 0)
+                            {
+                                Serial.println("  Usage: noise add <ID> <byte> <mask>");
+                            }
+                            else
+                            {
+                                String first = rest.substring(0, space2);
+                                String second = rest.substring(space2 + 1);
+                                second.trim();
+
+                                // Check for more spaces (full mask list)
+                                int space3 = second.indexOf(' ');
+                                if (space3 >= 0)
+                                {
+                                    // Full mask list: noise add <ID> m0 m1 m2 m3 m4 m5 m6 m7
+                                    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                                    noise_filter_t &nf = noise_filters[can_id];
+                                    memset(nf.mask, 0, 8);
+                                    nf.active = true;
+
+                                    // Parse all 8 mask bytes
+                                    String masks = rest;
+                                    for (int i = 0; i < 8 && masks.length() > 0; i++)
+                                    {
+                                        int sp = masks.indexOf(' ');
+                                        String m;
+                                        if (sp < 0)
+                                        {
+                                            m = masks;
+                                            masks = "";
+                                        }
+                                        else
+                                        {
+                                            m = masks.substring(0, sp);
+                                            masks = masks.substring(sp + 1);
+                                            masks.trim();
+                                        }
+                                        nf.mask[i] = strtoul(m.c_str(), NULL, 16);
+                                    }
+                                    xSemaphoreGive(tracker_mutex);
+
+                                    Serial.printf("  -> Added noise filter for 0x%03X\r\n", can_id);
+                                }
+                                else
+                                {
+                                    // Single byte+mask: noise add <ID> <byte> <mask>
+                                    uint8_t byte_idx = strtoul(first.c_str(), NULL, 10);
+                                    uint8_t mask = strtoul(second.c_str(), NULL, 16);
+
+                                    if (byte_idx > 7)
+                                    {
+                                        Serial.println("  [!] Byte index must be 0-7");
+                                    }
+                                    else
+                                    {
+                                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                                        noise_filter_t &nf = noise_filters[can_id];
+                                        if (!nf.active)
+                                        {
+                                            memset(nf.mask, 0, 8);
+                                            nf.active = true;
+                                        }
+                                        nf.mask[byte_idx] |= mask;  // OR with existing mask
+                                        xSemaphoreGive(tracker_mutex);
+
+                                        Serial.printf("  -> Added mask 0x%02X to 0x%03X byte %d\r\n",
+                                                      mask, can_id, byte_idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else if (cmd.startsWith("noise del "))
+                    {
+                        String id_str = cmd.substring(10);
+                        id_str.trim();
+                        uint32_t can_id = strtoul(id_str.c_str(), NULL, 16);
+
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        auto it = noise_filters.find(can_id);
+                        if (it != noise_filters.end())
+                        {
+                            noise_filters.erase(it);
+                            Serial.printf("  -> Removed noise filter for 0x%03X\r\n", can_id);
+                        }
+                        else
+                        {
+                            Serial.printf("  [!] No filter for 0x%03X\r\n", can_id);
+                        }
+                        xSemaphoreGive(tracker_mutex);
+                    }
+                    else if (cmd == "noise clear")
+                    {
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        noise_filters.clear();
+                        xSemaphoreGive(tracker_mutex);
+                        Serial.println("  -> All noise filters cleared");
+                    }
+                    else if (cmd == "noise preset")
+                    {
+                        // Load preset filters based on 370Z log analysis
+                        // These mask out rapidly changing counters/timers/sensors
+                        xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+                        noise_filters.clear();
+
+                        // 0x160 - Pedal position bytes change constantly
+                        noise_filters[0x160] = {{0xFF, 0xFF, 0xE0, 0xFF, 0xC0, 0x00, 0x00, 0x00}, true};
+
+                        // 0x174 - TCM gear/torque values
+                        noise_filters[0x174] = {{0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, 0x00}, true};
+
+                        // 0x177 - Unknown counter in byte 7
+                        noise_filters[0x177] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF}, true};
+
+                        // 0x180 - RPM and pedal position
+                        noise_filters[0x180] = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xC0, 0x00}, true};
+
+                        // 0x182 - Throttle position
+                        noise_filters[0x182] = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, true};
+
+                        // 0x280 - Speed bytes
+                        noise_filters[0x280] = {{0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00}, true};
+
+                        // 0x284/0x285 - Wheel speeds
+                        noise_filters[0x284] = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, true};
+                        noise_filters[0x285] = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}, true};
+
+                        // 0x292 - Brake pedal position
+                        noise_filters[0x292] = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00}, true};
+
+                        // 0x354 - Speed bytes
+                        noise_filters[0x354] = {{0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, true};
+
+                        // 0x355 - Speed bytes
+                        noise_filters[0x355] = {{0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00}, true};
+
+                        // 0x385 - TPMS pressure values (change slowly but constantly)
+                        noise_filters[0x385] = {{0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00}, true};
+
+                        // 0x2DE - Counter in byte 7
+                        noise_filters[0x2DE] = {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF}, true};
+
+                        // 0x551 - Temperature values
+                        noise_filters[0x551] = {{0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, true};
+
+                        // 0x580 - Oil temp
+                        noise_filters[0x580] = {{0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00}, true};
+
+                        // 0x560 - Temperature
+                        noise_filters[0x560] = {{0xFF, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, true};
+
+                        xSemaphoreGive(tracker_mutex);
+
+                        xSemaphoreTake(state_mutex, portMAX_DELAY);
+                        noise_filter_enabled = true;
+                        xSemaphoreGive(state_mutex);
+
+                        Serial.printf("  -> Loaded %d preset filters (370Z)\r\n", noise_filters.size());
+                        Serial.println("  -> Noise filter enabled");
                     }
                     else
                     {

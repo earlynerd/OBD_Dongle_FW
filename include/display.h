@@ -29,4 +29,9 @@ bool signal_changed(const uint8_t *old_data, const uint8_t *new_data,
 void print_decoded(const can_msg_t &msg, const uint8_t *old_data,
                    uint8_t old_dlc, bool has_old_data);
 
+// Print hunt mode bit change
+void print_hunt_change(uint32_t can_id, int byte_idx, int bit_idx,
+                       uint8_t old_bit, uint8_t new_bit, bool sticky,
+                       const char* mark = nullptr);
+
 #endif // DISPLAY_H

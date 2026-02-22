@@ -27,6 +27,12 @@ void save_settings()
     uint32_t fid = filter_id;
     xSemaphoreGive(state_mutex);
 
+    // Hunt mode is session-only, save as delta instead
+    if (mode == MODE_HUNT)
+    {
+        mode = MODE_DELTA;
+    }
+
     f.println("{");
     f.printf("  \"mode\": %d,\n", (int)mode);
     f.printf("  \"logging\": %s,\n", log_en ? "true" : "false");

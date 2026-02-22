@@ -25,6 +25,7 @@ bool is_safe_to_transmit()
     }
 
     // Check passive CAN data for RPM (0x180 ECM1)
+    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
     auto rpm_tracker = id_trackers.find(0x180);
     if (rpm_tracker != id_trackers.end() && rpm_tracker->second.seen)
     {
@@ -33,6 +34,7 @@ bool is_safe_to_transmit()
                             rpm_tracker->second.last_data[1];
         if (raw_rpm > 0)
         {
+            xSemaphoreGive(tracker_mutex);
             return false; // Engine running
         }
     }
@@ -46,9 +48,11 @@ bool is_safe_to_transmit()
                               speed_tracker->second.last_data[5];
         if (raw_speed > 0)
         {
+            xSemaphoreGive(tracker_mutex);
             return false; // Vehicle moving
         }
     }
+    xSemaphoreGive(tracker_mutex);
 
     return true;
 }
@@ -64,6 +68,9 @@ const char* get_tx_block_reason()
         return "TX mode not enabled (use 'tx on')";
     }
 
+    const char* reason = nullptr;
+    xSemaphoreTake(tracker_mutex, portMAX_DELAY);
+    
     auto rpm_tracker = id_trackers.find(0x180);
     if (rpm_tracker != id_trackers.end() && rpm_tracker->second.seen)
     {
@@ -71,22 +78,26 @@ const char* get_tx_block_reason()
                             rpm_tracker->second.last_data[1];
         if (raw_rpm > 0)
         {
-            return "Engine running (RPM > 0)";
+            reason = "Engine running (RPM > 0)";
         }
     }
 
-    auto speed_tracker = id_trackers.find(0x280);
-    if (speed_tracker != id_trackers.end() && speed_tracker->second.seen)
+    if (!reason)
     {
-        uint16_t raw_speed = (speed_tracker->second.last_data[4] << 8) |
-                              speed_tracker->second.last_data[5];
-        if (raw_speed > 0)
+        auto speed_tracker = id_trackers.find(0x280);
+        if (speed_tracker != id_trackers.end() && speed_tracker->second.seen)
         {
-            return "Vehicle moving (speed > 0)";
+            uint16_t raw_speed = (speed_tracker->second.last_data[4] << 8) |
+                                  speed_tracker->second.last_data[5];
+            if (raw_speed > 0)
+            {
+                reason = "Vehicle moving (speed > 0)";
+            }
         }
     }
-
-    return nullptr; // Safe to transmit
+    
+    xSemaphoreGive(tracker_mutex);
+    return reason;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

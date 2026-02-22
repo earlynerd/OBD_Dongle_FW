@@ -33,6 +33,15 @@ SIG_INT16 = 3       # Big-endian signed
 SIG_UINT16_LE = 4   # Little-endian unsigned
 SIG_INT16_LE = 5    # Little-endian signed
 SIG_UINT24 = 6      # Big-endian 24-bit unsigned
+# Non-byte-aligned types (for DBC compatibility)
+SIG_UINT12_BE = 7   # 12-bit big-endian: (byte[n] << 4) | (byte[n+1] >> 4)
+SIG_INT12_BE = 8    # 12-bit signed big-endian (sign extend from bit 11)
+SIG_UINT7 = 9       # 7-bit unsigned (masked from 8-bit byte)
+SIG_UINT3 = 10      # 3-bit unsigned (in low bits of byte)
+SIG_UINT4 = 11      # 4-bit unsigned (nibble, in low bits of byte)
+SIG_UINT11_BE = 12  # 11-bit big-endian: (byte[n] << 3) | (byte[n+1] >> 5)
+SIG_UINT10_BE = 13  # 10-bit big-endian: (byte[n] << 2) | (byte[n+1] >> 6)
+SIG_UINT12_BE_LOW = 14  # 12-bit: (byte[n] & 0x0F) << 8 | byte[n+1]
 
 @dataclass
 class Signal:
@@ -57,7 +66,7 @@ class Message:
 MESSAGES: Dict[int, Message] = {
     0x002: Message(0x002, "STRG", "STRG", 5, [
         Signal("SteerAngle", 0, 0xFF, 16, SIG_INT16_LE, 0.1, 0.0, "deg"),  # Little-endian signed
-        Signal("SteerVel", 2, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
+        Signal("SteerVel", 2, 0xFF, 8, SIG_UINT8, 4.0, 0.0, "d/s"),
     ]),
     0x160: Message(0x160, "THROT", "ECM", 7, [
         Signal("Pedal1", 3, 0xFF, 10, SIG_UINT16, 0.125, 0.0, "%"),
@@ -78,9 +87,24 @@ MESSAGES: Dict[int, Message] = {
         Signal("Throttle", 4, 0xFF, 8, SIG_UINT8, 0.392, 0.0, "%"),
         Signal("BrakeLight", 6, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
     ]),
+    0x15C: Message(0x15C, "GAS", "ECM", 8, [  # G37 DBC
+        Signal("GasPedal", 5, 0xFF, 10, SIG_UINT10_BE, 0.1, 0.0, "%"),
+    ]),
     0x1F9: Message(0x1F9, "ECM_AC", "ECM", 8, [
         Signal("ACReq", 0, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
         Signal("RPM", 2, 0xFF, 16, SIG_UINT16, 0.125, 0.0, "rpm"),
+        Signal("IgnRun", 0, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("IgnStart", 0, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
+    ]),
+    0x20B: Message(0x20B, "CRUIS", "STALK", 6, [  # G37 DBC
+        Signal("CruiseMain", 1, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("CruiseCancel", 1, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("CruiseDist", 1, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("CruiseSet", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("CruiseRes", 1, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("NoButton", 1, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("GasOff", 2, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("BrakeOn", 2, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
     ]),
     0x215: Message(0x215, "HVAC", "HVAC", 6, [
         Signal("AC", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
@@ -105,8 +129,14 @@ MESSAGES: Dict[int, Message] = {
         Signal("WheelRR", 0, 0xFF, 16, SIG_UINT16, 0.00311, 0.0, "mph"),
         Signal("WheelRL", 2, 0xFF, 16, SIG_UINT16, 0.00311, 0.0, "mph"),
     ]),
-    0x292: Message(0x292, "BRAKE", "ABS", 8, [
-        Signal("BrakePedal", 6, 0xFF, 8, SIG_UINT8, 1.0, 0.0, "%"),
+    0x292: Message(0x292, "IMU", "ABS", 8, [
+        Signal("LatAccel", 1, 0xFF, 12, SIG_UINT12_BE_LOW, 1.0, -2048.0, ""),
+        Signal("Yaw", 3, 0xFF, 12, SIG_UINT12_BE, 1.0, -2048.0, ""),
+        Signal("BrakePres", 6, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
+    ]),
+    0x300: Message(0x300, "STRTQ", "STRG", 2, [  # G37 DBC
+        Signal("SteerTorque", 0, 0xFF, 7, SIG_UINT7, 1.0, 0.0, ""),
+        Signal("SteerPressed", 1, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
     ]),
     0x351: Message(0x351, "KEY", "BCM", 8, [
         Signal("KeyPresent", 5, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
@@ -149,6 +179,7 @@ MESSAGES: Dict[int, Message] = {
     ]),
     0x551: Message(0x551, "COOL", "ECM", 8, [
         Signal("Coolant", 0, 0xFF, 8, SIG_UINT8, 1.0, -40.0, "C"),
+        Signal("FuelCons", 1, 0xFF, 8, SIG_UINT8, 1.0, 0.0, "mm3"),
         Signal("CruiseSpd", 4, 0xFF, 8, SIG_UINT8, 0.621, 0.0, "mph"),
         Signal("CruiseMaster", 5, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
         Signal("CruiseActive", 5, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
@@ -159,9 +190,33 @@ MESSAGES: Dict[int, Message] = {
         Signal("Odometer", 1, 0xFF, 24, SIG_UINT24, 1.0, 0.0, "mi"),
         Signal("SModeBtn", 4, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
     ]),
+    0x41F: Message(0x41F, "GBOX", "TCM", 2, [  # G37 DBC
+        Signal("GearPos", 0, 3, 3, SIG_UINT3, 1.0, 0.0, ""),
+        Signal("SportsMode", 1, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
+    ]),
     0x421: Message(0x421, "GEAR", "ECM", 3, [
         Signal("Shifter", 0, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
         Signal("SMode", 1, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
+    ]),
+    0x453: Message(0x453, "LIGHT", "BCM", 8, [  # G37 DBC
+        Signal("Headlights", 0, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("TurnL", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("TurnR", 1, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
+    ]),
+    0x4F9: Message(0x4F9, "HUD", "M&A", 7, [  # G37 DBC
+        Signal("SpeedMPH", 0, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("SeatbeltDrv", 3, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
+    ]),
+    0x542: Message(0x542, "HVTMP", "HVAC", 8, [  # G37 DBC
+        Signal("TempDrv", 1, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
+        Signal("TempPass", 2, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
+    ]),
+    0x54B: Message(0x54B, "HVCTL", "HVAC", 8, [  # G37 DBC
+        Signal("HVACOff", 0, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("HVACMode", 2, 3, 3, SIG_UINT3, 1.0, 0.0, ""),
+        Signal("RecircOn", 3, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("RecircOff", 3, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
+        Signal("FanLevel", 4, 3, 3, SIG_UINT3, 1.0, 0.0, ""),
     ]),
     0x54C: Message(0x54C, "HVAC2", "HVAC", 8, [
         Signal("EvapTemp", 0, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
@@ -214,36 +269,87 @@ def extract_signal(data: bytes, sig: Signal) -> float:
     raw = 0.0
 
     if sig.start_bit == 0xFF:
-        # Whole byte or word extraction
-        if sig.bit_length == 8:
+        # Whole byte or multi-byte extraction based on type
+        if sig.sig_type == SIG_UINT8 or sig.sig_type == SIG_BOOL:
             raw = data[sig.start_byte]
-        elif sig.bit_length == 16:
+
+        elif sig.sig_type == SIG_UINT7:
+            # 7-bit value (mask off high bit)
+            raw = data[sig.start_byte] & 0x7F
+
+        elif sig.sig_type == SIG_UINT3:
+            # 3-bit value (low 3 bits)
+            raw = data[sig.start_byte] & 0x07
+
+        elif sig.sig_type == SIG_UINT4:
+            # 4-bit value (low nibble)
+            raw = data[sig.start_byte] & 0x0F
+
+        elif sig.sig_type in (SIG_UINT16, SIG_INT16):
+            # Big-endian 16-bit
             if sig.start_byte + 1 < len(data):
-                if sig.sig_type in (SIG_UINT16_LE, SIG_INT16_LE):
-                    # Little-endian (low byte first)
-                    raw = data[sig.start_byte] | (data[sig.start_byte + 1] << 8)
-                else:
-                    # Big-endian (high byte first)
-                    raw = (data[sig.start_byte] << 8) | data[sig.start_byte + 1]
-                # Sign extend for signed types
-                if sig.sig_type in (SIG_INT16, SIG_INT16_LE):
-                    if raw > 32767:
-                        raw -= 65536
-        elif sig.bit_length == 24:
+                raw = (data[sig.start_byte] << 8) | data[sig.start_byte + 1]
+                if sig.sig_type == SIG_INT16 and raw > 32767:
+                    raw -= 65536
+
+        elif sig.sig_type in (SIG_UINT16_LE, SIG_INT16_LE):
+            # Little-endian 16-bit
+            if sig.start_byte + 1 < len(data):
+                raw = data[sig.start_byte] | (data[sig.start_byte + 1] << 8)
+                if sig.sig_type == SIG_INT16_LE and raw > 32767:
+                    raw -= 65536
+
+        elif sig.sig_type == SIG_UINT24:
             # 24-bit big-endian
             if sig.start_byte + 2 < len(data):
                 raw = (data[sig.start_byte] << 16) | (data[sig.start_byte + 1] << 8) | data[sig.start_byte + 2]
-        elif sig.bit_length == 10:
-            # 10-bit: (byte << 2) | (next_byte >> 6)
+
+        elif sig.sig_type in (SIG_UINT12_BE, SIG_INT12_BE):
+            # 12-bit big-endian: (byte[n] << 4) | (byte[n+1] >> 4)
+            if sig.start_byte + 1 < len(data):
+                raw = (data[sig.start_byte] << 4) | (data[sig.start_byte + 1] >> 4)
+                if sig.sig_type == SIG_INT12_BE and raw > 2047:
+                    raw -= 4096  # Sign extend from 12-bit
+
+        elif sig.sig_type == SIG_UINT12_BE_LOW:
+            # 12-bit: low nibble of byte[n] << 8 | byte[n+1]
+            if sig.start_byte + 1 < len(data):
+                raw = ((data[sig.start_byte] & 0x0F) << 8) | data[sig.start_byte + 1]
+
+        elif sig.sig_type == SIG_UINT11_BE:
+            # 11-bit big-endian: (byte[n] << 3) | (byte[n+1] >> 5)
+            if sig.start_byte + 1 < len(data):
+                raw = (data[sig.start_byte] << 3) | (data[sig.start_byte + 1] >> 5)
+
+        elif sig.sig_type == SIG_UINT10_BE:
+            # 10-bit big-endian: (byte[n] << 2) | (byte[n+1] >> 6)
             if sig.start_byte + 1 < len(data):
                 raw = (data[sig.start_byte] << 2) | (data[sig.start_byte + 1] >> 6)
+
+        else:
+            # Legacy bit_length based extraction for compatibility
+            if sig.bit_length == 8:
+                raw = data[sig.start_byte]
+            elif sig.bit_length == 16 and sig.start_byte + 1 < len(data):
+                raw = (data[sig.start_byte] << 8) | data[sig.start_byte + 1]
+            elif sig.bit_length == 10 and sig.start_byte + 1 < len(data):
+                raw = (data[sig.start_byte] << 2) | (data[sig.start_byte + 1] >> 6)
     else:
-        # Bit field extraction
+        # Bit field extraction (within a single byte or spanning bytes)
         if sig.bit_length == 1:
             raw = (data[sig.start_byte] >> sig.start_bit) & 0x01
-        else:
+        elif sig.bit_length <= 8 - sig.start_bit:
+            # Fits within single byte
             mask = (1 << sig.bit_length) - 1
             raw = (data[sig.start_byte] >> sig.start_bit) & mask
+        elif sig.start_byte + 1 < len(data):
+            # Spans two bytes - extract from start_bit in first byte
+            bits_in_first = 8 - sig.start_bit
+            bits_in_second = sig.bit_length - bits_in_first
+            mask_first = (1 << bits_in_first) - 1
+            mask_second = (1 << bits_in_second) - 1
+            raw = ((data[sig.start_byte] >> sig.start_bit) & mask_first) | \
+                  ((data[sig.start_byte + 1] & mask_second) << bits_in_first)
 
     return raw * sig.scale + sig.offset
 
@@ -274,6 +380,14 @@ def format_value(val: float, sig: Signal) -> str:
             128: "1", 136: "2", 144: "3", 152: "4", 160: "5", 168: "6"  # 6MT
         }
         return shifter_map.get(int(val), f"?{int(val)}")
+    elif sig.name == "HVACMode":
+        # HVAC mode: 0=off, 1=face, 2=face+feet, 3=feet, 4=feet+defrost, 5=defrost
+        mode_map = {0: "OFF", 1: "FACE", 2: "F+FT", 3: "FEET", 4: "FT+DF", 5: "DEF"}
+        return mode_map.get(int(val), f"?{int(val)}")
+    elif sig.name == "GearPos":
+        # G37 gearbox position (3-bit)
+        gear_map = {0: "P", 1: "R", 2: "N", 3: "D", 4: "S"}
+        return gear_map.get(int(val), f"?{int(val)}")
     elif sig.scale == 1.0 and sig.offset == 0.0:
         return f"{int(val)}{sig.unit}"
     else:
