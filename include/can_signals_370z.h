@@ -57,7 +57,7 @@ static const can_signal_t signals_002[] = {
 
 // 0x160 - Throttle/Pedal
 static const can_signal_t signals_160[] = {
-    {"Pedal1",        3, 0xFF, 10, SIG_UINT16,   0.125f,  0.0f, "%"},    // D + E[7:6], /8
+    {"Pedal1",        3, 0xFF, 10, SIG_UINT10_BE, 0.125f,  0.0f, "%"},    // D[7:0]+E[7:6] = 10 bits, /8
     {"WOT",           4,    5,  1, SIG_BOOL,     1.0f,    0.0f, ""},     // E bit 5
     {"ThrottleClosed",4,    3,  1, SIG_BOOL,     1.0f,    0.0f, ""},     // E bit 3
     {"Unk160_B0_0",   0,    0,  1, SIG_BOOL,     1.0f,    0.0f, ""},     // A bit 0 (hunt: 2 changes)
@@ -69,7 +69,7 @@ static const can_signal_t signals_160[] = {
 // 0x180 - ECM Primary
 static const can_signal_t signals_180[] = {
     {"RPM",           0, 0xFF, 16, SIG_UINT16,   0.125f,  0.0f, "rpm"},  // A,B: /8
-    {"Pedal",         5, 0xFF, 10, SIG_UINT16,   0.125f,  0.0f, "%"},    // F + G[7:6], /8
+    {"Pedal",         5, 0xFF, 10, SIG_UINT10_BE, 0.125f,  0.0f, "%"},    // F[7:0]+G[7:6] = 10 bits, /8
     {"Clutch",        7,    2,  1, SIG_BOOL,     1.0f,    0.0f, ""},     // H bit 2
     {"ClutchFull",    7,    0,  1, SIG_BOOL,     1.0f,    0.0f, ""},     // H bit 0
 };

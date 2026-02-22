@@ -15,7 +15,7 @@ BO_ 348 GAS: 8 ECM
  SG_ GasPedal : 47|10@0+ (0.1,0) [0|102.3] "%" Vector__XXX
 
 BO_ 352 THROT: 7 ECM
- SG_ Pedal1 : 31|10@0+ (8,0) [0|127.875] "%" Vector__XXX
+ SG_ Pedal1 : 31|10@0+ (0.125,0) [0|127.875] "%" Vector__XXX
  SG_ WOT : 37|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ ThrottleClosed : 35|1@1+ (1,0) [0|1] "" Vector__XXX
 
@@ -24,7 +24,7 @@ BO_ 372 TCM: 8 TCM
 
 BO_ 384 ECM1: 8 ECM
  SG_ RPM : 7|16@0+ (0.125,0) [0|8191.88] "rpm" Vector__XXX
- SG_ Pedal : 47|10@0+ (8,0) [0|127.875] "%" Vector__XXX
+ SG_ Pedal : 47|10@0+ (0.125,0) [0|127.875] "%" Vector__XXX
  SG_ Clutch : 58|1@1+ (1,0) [0|1] "" Vector__XXX
  SG_ ClutchFull : 56|1@1+ (1,0) [0|1] "" Vector__XXX
 

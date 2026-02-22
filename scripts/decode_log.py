@@ -69,7 +69,7 @@ MESSAGES: Dict[int, Message] = {
         Signal("SteerVel", 2, 0xFF, 8, SIG_UINT8, 4.0, 0.0, "d/s"),
     ]),
     0x160: Message(0x160, "THROT", "ECM", 7, [
-        Signal("Pedal1", 3, 0xFF, 10, SIG_UINT16, 0.125, 0.0, "%"),
+        Signal("Pedal1", 3, 0xFF, 10, SIG_UINT10_BE, 0.125, 0.0, "%"),
         Signal("WOT", 4, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
         Signal("ThrottleClosed", 4, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
     ]),
@@ -78,7 +78,7 @@ MESSAGES: Dict[int, Message] = {
     ]),
     0x180: Message(0x180, "ECM1", "ECM", 8, [
         Signal("RPM", 0, 0xFF, 16, SIG_UINT16, 0.125, 0.0, "rpm"),
-        Signal("Pedal", 5, 0xFF, 10, SIG_UINT16, 0.125, 0.0, "%"),
+        Signal("Pedal", 5, 0xFF, 10, SIG_UINT10_BE, 0.125, 0.0, "%"),
         Signal("Clutch", 7, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
         Signal("ClutchFull", 7, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
     ]),

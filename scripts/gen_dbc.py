@@ -150,15 +150,8 @@ def generate_dbc():
             dbc_start, bit_length, bo, sign = sig_to_dbc(sig)
             phys_min, phys_max = compute_range(sig)
 
-            # Adjust scale for signals where DBC bit_length differs from code extraction
             factor = sig.scale
             offset = sig.offset
-            if sig.sig_type in (SIG_UINT16, SIG_INT16) and sig.start_bit == 0xFF and sig.bit_length < 16:
-                # Code reads 16 bits but DBC uses actual bit_length
-                # Scale adjustment: raw_short = raw_16 >> (16 - bit_length)
-                # physical = raw_16 * scale = raw_short * scale * 2^(16-bit_length)
-                shift = 16 - sig.bit_length
-                factor = sig.scale * (1 << shift)
             if factor == int(factor):
                 factor_s = str(int(factor))
             else:
