@@ -102,9 +102,60 @@ void print_hunt_change(uint32_t can_id, int byte_idx, int bit_idx,
 // Signal Extraction
 // ═══════════════════════════════════════════════════════════════════════════
 
+static inline uint8_t bit_at(const uint8_t *data, uint8_t dlc, int bit_index)
+{
+    int byte_idx = bit_index / 8;
+    if (byte_idx < 0 || byte_idx >= dlc)
+        return 0;
+    int bit_in_byte = bit_index % 8;
+    return (data[byte_idx] >> bit_in_byte) & 0x01;
+}
+
+static uint32_t extract_raw_intel(const uint8_t *data, uint8_t dlc, uint16_t start_bit, uint8_t bit_length)
+{
+    uint32_t raw = 0;
+    for (uint8_t i = 0; i < bit_length && i < 32; i++)
+    {
+        raw |= ((uint32_t)bit_at(data, dlc, start_bit + i) << i);
+    }
+    return raw;
+}
+
+static uint32_t extract_raw_motorola(const uint8_t *data, uint8_t dlc, uint16_t start_bit, uint8_t bit_length)
+{
+    uint32_t raw = 0;
+    int pos = (int)start_bit;
+    for (uint8_t i = 0; i < bit_length && i < 32; i++)
+    {
+        raw = (raw << 1) | bit_at(data, dlc, pos);
+        if ((pos % 8) == 0)
+            pos += 15;
+        else
+            pos -= 1;
+    }
+    return raw;
+}
+
 float extract_signal(const uint8_t *data, uint8_t dlc, const can_signal_t &sig)
 {
     float raw = 0;
+
+    if (sig.type == SIG_DBC_GENERIC)
+    {
+        uint32_t raw_u = 0;
+        if (sig.dbc_byte_order == 1)
+            raw_u = extract_raw_intel(data, dlc, sig.dbc_start_bit, sig.bit_length);
+        else
+            raw_u = extract_raw_motorola(data, dlc, sig.dbc_start_bit, sig.bit_length);
+
+        if (sig.dbc_is_signed && sig.bit_length > 0 && sig.bit_length < 32)
+        {
+            uint32_t sign = 1UL << (sig.bit_length - 1);
+            int32_t signed_raw = (raw_u & sign) ? (int32_t)(raw_u - (1UL << sig.bit_length)) : (int32_t)raw_u;
+            return signed_raw * sig.scale + sig.offset;
+        }
+        return (float)raw_u * sig.scale + sig.offset;
+    }
 
     if (sig.start_bit == 0xFF)
     {
@@ -292,7 +343,7 @@ bool signal_changed(const uint8_t *old_data, const uint8_t *new_data,
         return true;
 
     // For booleans, exact comparison
-    if (sig.type == SIG_BOOL)
+    if (sig.type == SIG_BOOL || (sig.type == SIG_DBC_GENERIC && sig.bit_length == 1 && sig.scale == 1.0f && sig.offset == 0.0f))
     {
         return (old_val != 0) != (new_val != 0);
     }
@@ -344,7 +395,7 @@ void print_decoded(const can_msg_t &msg, const uint8_t *old_data,
         }
         any_changed = true;
 
-        if (sig.type == SIG_BOOL)
+        if (sig.type == SIG_BOOL || (sig.type == SIG_DBC_GENERIC && sig.bit_length == 1 && sig.scale == 1.0f && sig.offset == 0.0f))
         {
             pos += snprintf(line + pos, LINE_SIZE - pos, " %s=%s",
                             sig.name, val != 0 ? "ON" : "OFF");

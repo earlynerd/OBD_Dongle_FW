@@ -14,6 +14,8 @@ Usage:
 
 import argparse
 import csv
+import pathlib
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set
@@ -25,34 +27,17 @@ try:
 except ImportError:
     HAS_MATPLOTLIB = False
 
-# Signal types
-SIG_BOOL = 0
-SIG_UINT8 = 1
-SIG_UINT16 = 2      # Big-endian unsigned
-SIG_INT16 = 3       # Big-endian signed
-SIG_UINT16_LE = 4   # Little-endian unsigned
-SIG_INT16_LE = 5    # Little-endian signed
-SIG_UINT24 = 6      # Big-endian 24-bit unsigned
-# Non-byte-aligned types (for DBC compatibility)
-SIG_UINT12_BE = 7   # 12-bit big-endian: (byte[n] << 4) | (byte[n+1] >> 4)
-SIG_INT12_BE = 8    # 12-bit signed big-endian (sign extend from bit 11)
-SIG_UINT7 = 9       # 7-bit unsigned (masked from 8-bit byte)
-SIG_UINT3 = 10      # 3-bit unsigned (in low bits of byte)
-SIG_UINT4 = 11      # 4-bit unsigned (nibble, in low bits of byte)
-SIG_UINT11_BE = 12  # 11-bit big-endian: (byte[n] << 3) | (byte[n+1] >> 5)
-SIG_UINT10_BE = 13  # 10-bit big-endian: (byte[n] << 2) | (byte[n+1] >> 6)
-SIG_UINT12_BE_LOW = 14  # 12-bit: (byte[n] & 0x0F) << 8 | byte[n+1]
-
 @dataclass
 class Signal:
     name: str
-    start_byte: int
-    start_bit: int  # 0xFF = whole byte/word
+    start_bit: int
     bit_length: int
-    sig_type: int
+    byte_order: int  # 0=Motorola(big-endian), 1=Intel(little-endian)
+    is_signed: bool
     scale: float
     offset: float
     unit: str
+    value_map: Dict[int, str] = field(default_factory=dict)
 
 @dataclass
 class Message:
@@ -62,196 +47,123 @@ class Message:
     dlc: int
     signals: List[Signal]
 
-# Signal database (matches can_signals_370z.h)
-MESSAGES: Dict[int, Message] = {
-    0x002: Message(0x002, "STRG", "STRG", 5, [
-        Signal("SteerAngle", 0, 0xFF, 16, SIG_INT16_LE, 0.1, 0.0, "deg"),  # Little-endian signed
-        Signal("SteerVel", 2, 0xFF, 8, SIG_UINT8, 4.0, 0.0, "d/s"),
-    ]),
-    0x160: Message(0x160, "THROT", "ECM", 7, [
-        Signal("Pedal1", 3, 0xFF, 10, SIG_UINT10_BE, 0.125, 0.0, "%"),
-        Signal("WOT", 4, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("ThrottleClosed", 4, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x174: Message(0x174, "TCM", "TCM", 8, [
-        Signal("ATGear", 3, 0, 4, SIG_UINT8, 1.0, 0.0, ""),  # Low nibble of byte 3
-    ]),
-    0x180: Message(0x180, "ECM1", "ECM", 8, [
-        Signal("RPM", 0, 0xFF, 16, SIG_UINT16, 0.125, 0.0, "rpm"),
-        Signal("Pedal", 5, 0xFF, 10, SIG_UINT10_BE, 0.125, 0.0, "%"),
-        Signal("Clutch", 7, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("ClutchFull", 7, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x182: Message(0x182, "ECM2", "ECM", 8, [
-        Signal("ThrottleClosed", 1, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Throttle", 4, 0xFF, 8, SIG_UINT8, 0.392, 0.0, "%"),
-        Signal("BrakeLight", 6, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x15C: Message(0x15C, "GAS", "ECM", 8, [  # G37 DBC
-        Signal("GasPedal", 5, 0xFF, 10, SIG_UINT10_BE, 0.1, 0.0, "%"),
-    ]),
-    0x1F9: Message(0x1F9, "ECM_AC", "ECM", 8, [
-        Signal("ACReq", 0, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("RPM", 2, 0xFF, 16, SIG_UINT16, 0.125, 0.0, "rpm"),
-        Signal("IgnRun", 0, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("IgnStart", 0, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x20B: Message(0x20B, "CRUIS", "STALK", 6, [  # G37 DBC
-        Signal("CruiseMain", 1, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("CruiseCancel", 1, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("CruiseDist", 1, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("CruiseSet", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("CruiseRes", 1, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("NoButton", 1, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("GasOff", 2, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("BrakeOn", 2, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x215: Message(0x215, "HVAC", "HVAC", 6, [
-        Signal("AC", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("ACComp", 1, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x216: Message(0x216, "IPDM", "IPDM", 2, [
-        Signal("IgnBtn", 0, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("IgnON", 0, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Hood", 1, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("ClutchFull", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x280: Message(0x280, "SEAT", "M&A", 8, [
-        Signal("Seatbelt", 0, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Speed", 4, 0xFF, 16, SIG_UINT16, 0.00621, 0.0, "mph"),
-    ]),
-    0x284: Message(0x284, "ABS_F", "ABS", 8, [
-        Signal("WheelFR", 0, 0xFF, 16, SIG_UINT16, 0.00311, 0.0, "mph"),
-        Signal("WheelFL", 2, 0xFF, 16, SIG_UINT16, 0.00311, 0.0, "mph"),
-        Signal("Speed", 4, 0xFF, 16, SIG_UINT16, 0.00621, 0.0, "mph"),
-    ]),
-    0x285: Message(0x285, "ABS_R", "ABS", 8, [
-        Signal("WheelRR", 0, 0xFF, 16, SIG_UINT16, 0.00311, 0.0, "mph"),
-        Signal("WheelRL", 2, 0xFF, 16, SIG_UINT16, 0.00311, 0.0, "mph"),
-    ]),
-    0x292: Message(0x292, "IMU", "ABS", 8, [
-        Signal("LatAccel", 1, 0xFF, 12, SIG_UINT12_BE_LOW, 1.0, -2048.0, ""),
-        Signal("Yaw", 3, 0xFF, 12, SIG_UINT12_BE, 1.0, -2048.0, ""),
-        Signal("BrakePres", 6, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
-    ]),
-    0x300: Message(0x300, "STRTQ", "STRG", 2, [  # G37 DBC
-        Signal("SteerTorque", 0, 0xFF, 7, SIG_UINT7, 1.0, 0.0, ""),
-        Signal("SteerPressed", 1, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x351: Message(0x351, "KEY", "BCM", 8, [
-        Signal("KeyPresent", 5, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("ClutchFull", 7, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x354: Message(0x354, "VDC", "ABS", 8, [
-        Signal("Speed", 0, 0xFF, 16, SIG_UINT16, 0.00621, 0.0, "mph"),
-        Signal("VDC", 4, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("VDCOff", 5, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Brake", 6, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("VDCWarn", 6, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x355: Message(0x355, "SPEED", "ABS", 7, [
-        Signal("Speed1", 0, 0xFF, 16, SIG_UINT16, 0.00621, 0.0, "mph"),
-        Signal("Speed2", 2, 0xFF, 16, SIG_UINT16, 0.00621, 0.0, "mph"),
-        Signal("Units", 4, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x358: Message(0x358, "BCM1", "BCM", 8, [
-        Signal("KeySlot", 0, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Stopped", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Headlights", 1, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Trunk", 6, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x35D: Message(0x35D, "BCM2", "BCM", 8, [
-        Signal("WiperCont", 2, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("WiperOn", 2, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("WiperFast", 2, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Forward", 4, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Brake", 4, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x385: Message(0x385, "TPMS", "BCM", 7, [
-        Signal("Tire1", 2, 0xFF, 8, SIG_UINT8, 0.25, 0.0, "psi"),
-        Signal("Tire2", 3, 0xFF, 8, SIG_UINT8, 0.25, 0.0, "psi"),
-        Signal("Tire3", 4, 0xFF, 8, SIG_UINT8, 0.25, 0.0, "psi"),
-        Signal("Tire4", 5, 0xFF, 8, SIG_UINT8, 0.25, 0.0, "psi"),
-        Signal("Tire1Valid", 6, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Tire2Valid", 6, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Tire3Valid", 6, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Tire4Valid", 6, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x551: Message(0x551, "COOL", "ECM", 8, [
-        Signal("Coolant", 0, 0xFF, 8, SIG_UINT8, 1.0, -40.0, "C"),
-        Signal("FuelCons", 1, 0xFF, 8, SIG_UINT8, 1.0, 0.0, "mm3"),
-        Signal("CruiseSpd", 4, 0xFF, 8, SIG_UINT8, 0.621, 0.0, "mph"),
-        Signal("CruiseMaster", 5, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("CruiseActive", 5, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x5C5: Message(0x5C5, "M&A", "M&A", 8, [
-        Signal("Hazard", 0, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("ParkBrake", 0, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Odometer", 1, 0xFF, 24, SIG_UINT24, 1.0, 0.0, "mi"),
-        Signal("SModeBtn", 4, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x41F: Message(0x41F, "GBOX", "TCM", 2, [  # G37 DBC
-        Signal("GearPos", 0, 3, 3, SIG_UINT3, 1.0, 0.0, ""),
-        Signal("SportsMode", 1, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x421: Message(0x421, "GEAR", "ECM", 3, [
-        Signal("Shifter", 0, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
-        Signal("SMode", 1, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x453: Message(0x453, "LIGHT", "BCM", 8, [  # G37 DBC
-        Signal("Headlights", 0, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("TurnL", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("TurnR", 1, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x4F9: Message(0x4F9, "HUD", "M&A", 7, [  # G37 DBC
-        Signal("SpeedMPH", 0, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("SeatbeltDrv", 3, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x542: Message(0x542, "HVTMP", "HVAC", 8, [  # G37 DBC
-        Signal("TempDrv", 1, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
-        Signal("TempPass", 2, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
-    ]),
-    0x54B: Message(0x54B, "HVCTL", "HVAC", 8, [  # G37 DBC
-        Signal("HVACOff", 0, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("HVACMode", 2, 3, 3, SIG_UINT3, 1.0, 0.0, ""),
-        Signal("RecircOn", 3, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("RecircOff", 3, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("FanLevel", 4, 3, 3, SIG_UINT3, 1.0, 0.0, ""),
-    ]),
-    0x54C: Message(0x54C, "HVAC2", "HVAC", 8, [
-        Signal("EvapTemp", 0, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
-        Signal("EvapTarget", 1, 0xFF, 8, SIG_UINT8, 1.0, 0.0, ""),
-        Signal("ACStatus", 2, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Blower", 2, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Recirc", 7, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x580: Message(0x580, "OIL2", "ECM", 8, [
-        Signal("OilTemp", 4, 0xFF, 8, SIG_UINT8, 1.0, -40.0, "C"),
-    ]),
-    0x60D: Message(0x60D, "BCM3", "BCM", 8, [
-        Signal("Trunk", 0, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("PassDoor", 0, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("DrvDoor", 0, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Running", 0, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("Headlights", 0, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("TurnR", 1, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("TurnL", 1, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("HighBeam", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("IgnON", 1, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("IgnACC", 1, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("DrvLock", 2, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-    0x625: Message(0x625, "IPDM2", "IPDM", 8, [
-        Signal("Defogger", 0, 0, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("ACCompFB", 1, 7, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("RunningFB", 1, 6, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("LowBeamFB", 1, 5, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("HighBeamFB", 1, 4, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("WiperFast", 1, 3, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("WiperSlow", 1, 2, 1, SIG_BOOL, 1.0, 0.0, ""),
-        Signal("WiperHome", 1, 1, 1, SIG_BOOL, 1.0, 0.0, ""),
-    ]),
-}
+_RE_BO = re.compile(r"^BO_\s+(\d+)\s+(\w+)\s*:\s*(\d+)\s+(\w+)")
+_RE_VAL = re.compile(r"^VAL_\s+(\d+)\s+(\w+)\s+(.+)\s*;")
+_RE_VAL_PAIR = re.compile(r"(-?\d+)\s+\"([^\"]*)\"")
+
+
+def _parse_sg_line(line: str) -> Optional[Tuple[str, int, int, int, bool, float, float, str]]:
+    # Example:
+    # SG_ Speed : 7|16@0+ (0.00621,0) [0|406.972] "mph" Vector__XXX
+    s = line.strip()
+    if not s.startswith("SG_"):
+        return None
+    if ":" not in s:
+        return None
+    left, right = s.split(":", 1)
+    name = left.replace("SG_", "", 1).strip().split()[0]
+    right = right.strip()
+
+    # bit token
+    toks = right.split(None, 1)
+    if not toks:
+        return None
+    bit_tok = toks[0]
+    if "|" not in bit_tok or "@" not in bit_tok:
+        return None
+    try:
+        start_s, rest = bit_tok.split("|", 1)
+        length_s, ord_sign = rest.split("@", 1)
+        start_bit = int(start_s)
+        bit_length = int(length_s)
+        byte_order = int(ord_sign[0])
+        is_signed = ord_sign[1] == "-"
+    except Exception:
+        return None
+
+    # scale/offset
+    lp = right.find("(")
+    rp = right.find(")", lp + 1)
+    if lp < 0 or rp < 0:
+        return None
+    try:
+        scale_s, offset_s = right[lp + 1 : rp].split(",", 1)
+        scale = float(scale_s.strip())
+        offset = float(offset_s.strip())
+    except Exception:
+        return None
+
+    # unit (optional)
+    unit = ""
+    q1 = right.find('"')
+    if q1 >= 0:
+        q2 = right.find('"', q1 + 1)
+        if q2 > q1:
+            unit = right[q1 + 1 : q2]
+
+    return name, start_bit, bit_length, byte_order, is_signed, scale, offset, unit
+
+
+def load_dbc_messages(dbc_path: str) -> Dict[int, Message]:
+    messages: Dict[int, Message] = {}
+    current_id: Optional[int] = None
+    value_maps: Dict[Tuple[int, str], Dict[int, str]] = {}
+
+    with open(dbc_path, "r", encoding="utf-8", errors="ignore") as f:
+        for raw_line in f:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            m_bo = _RE_BO.match(line)
+            if m_bo:
+                msg_id = int(m_bo.group(1))
+                name = m_bo.group(2)
+                dlc = int(m_bo.group(3))
+                src = m_bo.group(4)
+                messages[msg_id] = Message(msg_id, name, src, dlc, [])
+                current_id = msg_id
+                continue
+
+            sg = _parse_sg_line(line)
+            if sg is not None and current_id is not None:
+                sig = Signal(
+                    name=sg[0],
+                    start_bit=sg[1],
+                    bit_length=sg[2],
+                    byte_order=sg[3],
+                    is_signed=sg[4],
+                    scale=sg[5],
+                    offset=sg[6],
+                    unit=sg[7],
+                )
+                messages[current_id].signals.append(sig)
+                continue
+
+            m_val = _RE_VAL.match(line)
+            if m_val:
+                msg_id = int(m_val.group(1))
+                sig_name = m_val.group(2)
+                rest = m_val.group(3)
+                vmap: Dict[int, str] = {}
+                for vm in _RE_VAL_PAIR.finditer(rest):
+                    vmap[int(vm.group(1))] = vm.group(2)
+                value_maps[(msg_id, sig_name)] = vmap
+
+    for msg_id, msg in messages.items():
+        for sig in msg.signals:
+            sig.value_map = value_maps.get((msg_id, sig.name), {})
+
+    return messages
+
+
+DEFAULT_DBC_PATH = (pathlib.Path(__file__).resolve().parent.parent / "Nissan_370Z_Z34.dbc")
+MESSAGES: Dict[int, Message] = {}
+if DEFAULT_DBC_PATH.exists():
+    try:
+        MESSAGES = load_dbc_messages(str(DEFAULT_DBC_PATH))
+    except Exception:
+        MESSAGES = {}
 
 
 def parse_data_bytes(data_str: str) -> bytes:
@@ -261,103 +173,55 @@ def parse_data_bytes(data_str: str) -> bytes:
     return bytes.fromhex(data_str)
 
 
+def _bit_at(data: bytes, bit_index: int) -> int:
+    byte_idx = bit_index // 8
+    if byte_idx < 0 or byte_idx >= len(data):
+        return 0
+    bit_in_byte = bit_index % 8
+    return (data[byte_idx] >> bit_in_byte) & 0x01
+
+
+def _extract_raw_intel(data: bytes, start_bit: int, bit_length: int) -> int:
+    raw = 0
+    for i in range(bit_length):
+        raw |= (_bit_at(data, start_bit + i) << i)
+    return raw
+
+
+def _extract_raw_motorola(data: bytes, start_bit: int, bit_length: int) -> int:
+    raw = 0
+    pos = start_bit
+    for _ in range(bit_length):
+        raw = (raw << 1) | _bit_at(data, pos)
+        if pos % 8 == 0:
+            pos += 15
+        else:
+            pos -= 1
+    return raw
+
+
 def extract_signal(data: bytes, sig: Signal, can_id: Optional[int] = None) -> Optional[float]:
     """Extract a signal value from CAN data bytes.
 
     Returns None for known invalid/sentinel encodings.
     """
-    if len(data) <= sig.start_byte:
+    if sig.bit_length <= 0:
         return 0.0
 
-    raw = 0.0
-
-    if sig.start_bit == 0xFF:
-        # Whole byte or multi-byte extraction based on type
-        if sig.sig_type == SIG_UINT8 or sig.sig_type == SIG_BOOL:
-            raw = data[sig.start_byte]
-
-        elif sig.sig_type == SIG_UINT7:
-            # 7-bit value (mask off high bit)
-            raw = data[sig.start_byte] & 0x7F
-
-        elif sig.sig_type == SIG_UINT3:
-            # 3-bit value (low 3 bits)
-            raw = data[sig.start_byte] & 0x07
-
-        elif sig.sig_type == SIG_UINT4:
-            # 4-bit value (low nibble)
-            raw = data[sig.start_byte] & 0x0F
-
-        elif sig.sig_type in (SIG_UINT16, SIG_INT16):
-            # Big-endian 16-bit
-            if sig.start_byte + 1 < len(data):
-                raw = (data[sig.start_byte] << 8) | data[sig.start_byte + 1]
-                if sig.sig_type == SIG_INT16 and raw > 32767:
-                    raw -= 65536
-
-        elif sig.sig_type in (SIG_UINT16_LE, SIG_INT16_LE):
-            # Little-endian 16-bit
-            if sig.start_byte + 1 < len(data):
-                raw = data[sig.start_byte] | (data[sig.start_byte + 1] << 8)
-                if sig.sig_type == SIG_INT16_LE and raw > 32767:
-                    raw -= 65536
-
-        elif sig.sig_type == SIG_UINT24:
-            # 24-bit big-endian
-            if sig.start_byte + 2 < len(data):
-                raw = (data[sig.start_byte] << 16) | (data[sig.start_byte + 1] << 8) | data[sig.start_byte + 2]
-
-        elif sig.sig_type in (SIG_UINT12_BE, SIG_INT12_BE):
-            # 12-bit big-endian: (byte[n] << 4) | (byte[n+1] >> 4)
-            if sig.start_byte + 1 < len(data):
-                raw = (data[sig.start_byte] << 4) | (data[sig.start_byte + 1] >> 4)
-                if sig.sig_type == SIG_INT12_BE and raw > 2047:
-                    raw -= 4096  # Sign extend from 12-bit
-
-        elif sig.sig_type == SIG_UINT12_BE_LOW:
-            # 12-bit: low nibble of byte[n] << 8 | byte[n+1]
-            if sig.start_byte + 1 < len(data):
-                raw = ((data[sig.start_byte] & 0x0F) << 8) | data[sig.start_byte + 1]
-
-        elif sig.sig_type == SIG_UINT11_BE:
-            # 11-bit big-endian: (byte[n] << 3) | (byte[n+1] >> 5)
-            if sig.start_byte + 1 < len(data):
-                raw = (data[sig.start_byte] << 3) | (data[sig.start_byte + 1] >> 5)
-
-        elif sig.sig_type == SIG_UINT10_BE:
-            # 10-bit big-endian: (byte[n] << 2) | (byte[n+1] >> 6)
-            if sig.start_byte + 1 < len(data):
-                raw = (data[sig.start_byte] << 2) | (data[sig.start_byte + 1] >> 6)
-
-        else:
-            # Legacy bit_length based extraction for compatibility
-            if sig.bit_length == 8:
-                raw = data[sig.start_byte]
-            elif sig.bit_length == 16 and sig.start_byte + 1 < len(data):
-                raw = (data[sig.start_byte] << 8) | data[sig.start_byte + 1]
-            elif sig.bit_length == 10 and sig.start_byte + 1 < len(data):
-                raw = (data[sig.start_byte] << 2) | (data[sig.start_byte + 1] >> 6)
+    if sig.byte_order == 1:
+        raw = _extract_raw_intel(data, sig.start_bit, sig.bit_length)
     else:
-        # Bit field extraction (within a single byte or spanning bytes)
-        if sig.bit_length == 1:
-            raw = (data[sig.start_byte] >> sig.start_bit) & 0x01
-        elif sig.bit_length <= 8 - sig.start_bit:
-            # Fits within single byte
-            mask = (1 << sig.bit_length) - 1
-            raw = (data[sig.start_byte] >> sig.start_bit) & mask
-        elif sig.start_byte + 1 < len(data):
-            # Spans two bytes - extract from start_bit in first byte
-            bits_in_first = 8 - sig.start_bit
-            bits_in_second = sig.bit_length - bits_in_first
-            mask_first = (1 << bits_in_first) - 1
-            mask_second = (1 << bits_in_second) - 1
-            raw = ((data[sig.start_byte] >> sig.start_bit) & mask_first) | \
-                  ((data[sig.start_byte + 1] & mask_second) << bits_in_first)
+        raw = _extract_raw_motorola(data, sig.start_bit, sig.bit_length)
+
+    if sig.is_signed and sig.bit_length > 0:
+        sign_bit = 1 << (sig.bit_length - 1)
+        if raw & sign_bit:
+            raw -= (1 << sig.bit_length)
 
     # Known invalid/sentinel values from field logs:
     # - 0x355 Speed2 sometimes transmits 0xFFFF (invalid)
-    if can_id == 0x355 and sig.name == "Speed2" and sig.start_byte + 1 < len(data):
-        if data[sig.start_byte] == 0xFF and data[sig.start_byte + 1] == 0xFF:
+    if can_id == 0x355 and sig.name == "Speed2" and len(data) >= 4:
+        if data[2] == 0xFF and data[3] == 0xFF:
             return None
 
     # - 0x292 occasionally carries an all-ones invalid IMU frame:
@@ -380,7 +244,7 @@ def signal_changed(old_val: Optional[float], new_val: Optional[float], sig: Sign
     if old_val is None:
         return True
 
-    if sig.sig_type == SIG_BOOL:
+    if sig.bit_length == 1 and sig.scale == 1.0 and sig.offset == 0.0:
         return (old_val != 0) != (new_val != 0)
     else:
         return abs(old_val - new_val) > 0.01
@@ -388,7 +252,10 @@ def signal_changed(old_val: Optional[float], new_val: Optional[float], sig: Sign
 
 def format_value(val: float, sig: Signal) -> str:
     """Format a signal value for display."""
-    if sig.sig_type == SIG_BOOL:
+    if sig.value_map:
+        return sig.value_map.get(int(round(val)), f"?{int(round(val))}")
+
+    if sig.bit_length == 1 and sig.scale == 1.0 and sig.offset == 0.0:
         return "ON" if val != 0 else "OFF"
     elif sig.name == "ATGear":
         # 7AT current gear (from 0x174 low nibble)
@@ -901,12 +768,25 @@ Examples:
                        help='Plot signals over time (comma-separated, e.g., RPM,Speed,Throttle)')
     parser.add_argument('--subplots', action='store_true',
                        help='Use separate subplot for each signal (with --plot)')
+    parser.add_argument('--dbc', type=str, default=str(DEFAULT_DBC_PATH),
+                       help='Path to DBC file (default: Nissan_370Z_Z34.dbc)')
     parser.add_argument('--session', type=int,
                        help='Only process one session index (0-based), detected from seq resets')
     parser.add_argument('--list-sessions', action='store_true',
                        help='List detected sessions from seq counter resets and exit')
 
     args = parser.parse_args()
+
+    global MESSAGES
+    try:
+        MESSAGES = load_dbc_messages(args.dbc)
+    except Exception as e:
+        print(f"Error: failed to load DBC '{args.dbc}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not MESSAGES:
+        print(f"Error: no messages loaded from DBC '{args.dbc}'", file=sys.stderr)
+        sys.exit(1)
 
     if args.list_sessions:
         if not args.input:

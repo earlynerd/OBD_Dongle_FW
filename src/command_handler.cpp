@@ -15,6 +15,7 @@
 #include "obd2_pids.h"
 #include "nissan_consult.h"
 #include "command_handler.h"
+#include "dbc_runtime.h"
 
 // External reference to id_trackers (owned by main.cpp, accessed from dispatch task)
 extern std::map<uint32_t, id_tracker_t> id_trackers;
@@ -90,6 +91,8 @@ static void print_help()
     Serial.println("  clear        Reset ID trackers");
     Serial.println("  vbat         Read battery voltage");
     Serial.println("  status       Show current settings");
+    Serial.println("  dbc          Show active DBC source");
+    Serial.println("  dbc reload   Reload first .dbc from SD root");
     Serial.println("  help         This message");
     Serial.println("══════════════════════════════════════════════════");
     Serial.println(" NOTE: TX is blocked if engine running or moving");
@@ -162,6 +165,14 @@ static void print_status()
             Serial.printf("             (%s)\r\n", reason);
     }
     Serial.printf("  NoiseFltr: %s (%d filters)\r\n", nf_en ? "ON" : "OFF", nf_count);
+    if (dbc_runtime_is_loaded())
+    {
+        Serial.printf("  DBC:       SD runtime (%s)\r\n", dbc_runtime_loaded_path());
+    }
+    else
+    {
+        Serial.printf("  DBC:       Built-in (can_signals_370z.h)\r\n");
+    }
     Serial.printf("  Frames:    %lu total, %lu dropped\r\n", (uint32_t)total_frames, (uint32_t)dropped_frames);
     Serial.printf("  Unique IDs: %lu\r\n", unique_ids);
     Serial.printf("  Uptime:    %lus\r\n", millis() / 1000);
@@ -578,6 +589,36 @@ void cmd_task(void *pv)
                     else if (cmd == "status")
                     {
                         print_status();
+                    }
+                    else if (cmd == "dbc")
+                    {
+                        if (!sd_available)
+                        {
+                            Serial.println("  DBC: SD not available (using built-in)");
+                        }
+                        else if (dbc_runtime_is_loaded())
+                        {
+                            Serial.printf("  DBC: SD runtime (%s)\r\n", dbc_runtime_loaded_path());
+                        }
+                        else
+                        {
+                            Serial.println("  DBC: built-in (no .dbc loaded from SD root)");
+                        }
+                    }
+                    else if (cmd == "dbc reload")
+                    {
+                        if (!sd_available)
+                        {
+                            Serial.println("  [!] SD card not available");
+                        }
+                        else if (dbc_runtime_load_from_sd_root())
+                        {
+                            Serial.printf("  [OK] DBC loaded: %s\r\n", dbc_runtime_loaded_path());
+                        }
+                        else
+                        {
+                            Serial.println("  [!] No root .dbc found, keeping built-in decode");
+                        }
                     }
                     // ── OBD2 Commands ──────────────────────────────────────
                     else if (cmd == "tx on")

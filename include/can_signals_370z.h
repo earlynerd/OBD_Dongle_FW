@@ -20,7 +20,8 @@ enum signal_type_t {
     SIG_UINT3,      // 3-bit unsigned (in low bits of byte)
     SIG_UINT4,      // 4-bit unsigned (nibble, in low bits of byte)
     SIG_UINT11_BE,  // 11-bit big-endian: (byte[n] << 3) | (byte[n+1] >> 5)
-    SIG_UINT10_BE   // 10-bit big-endian: (byte[n] << 2) | (byte[n+1] >> 6) - existing 10-bit
+    SIG_UINT10_BE,  // 10-bit big-endian: (byte[n] << 2) | (byte[n+1] >> 6) - existing 10-bit
+    SIG_DBC_GENERIC // Runtime DBC-defined bitfield (Intel/Motorola, signed/unsigned)
 };
 
 // Signal definition
@@ -33,6 +34,10 @@ struct can_signal_t {
     float scale;            // Multiply raw value by this
     float offset;           // Add this after scaling
     const char* unit;       // Unit string ("RPM", "mph", "%", etc.)
+    // Runtime DBC fields (used when type == SIG_DBC_GENERIC)
+    uint16_t dbc_start_bit; // DBC absolute start bit
+    uint8_t dbc_byte_order; // 0=Motorola, 1=Intel
+    uint8_t dbc_is_signed;  // 1=signed, 0=unsigned
 };
 
 // Message definition
@@ -410,6 +415,13 @@ static const uint8_t CAN_MESSAGE_COUNT = ARRAY_SIZE(can_messages);
 // ═══════════════════════════════════════════════════════════════════════════
 
 inline const can_message_t* find_message(uint32_t id) {
+    // Runtime DBC (if loaded from SD) takes precedence.
+    extern const can_message_t* dbc_runtime_find_message(uint32_t id);
+    const can_message_t *rt = dbc_runtime_find_message(id);
+    if (rt)
+        return rt;
+
+    // Built-in static fallback.
     for (uint8_t i = 0; i < CAN_MESSAGE_COUNT; i++) {
         if (can_messages[i].id == id) {
             return &can_messages[i];

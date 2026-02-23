@@ -6,6 +6,7 @@
 #include "can_types.h"
 #include "globals.h"
 #include "settings.h"
+#include "dbc_runtime.h"
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SD Logger Task
@@ -43,6 +44,16 @@ void logger_task(void *pv)
     xSemaphoreTake(state_mutex, portMAX_DELAY);
     sd_available = true;
     xSemaphoreGive(state_mutex);
+
+    // Load DBC from SD root if present (runtime decode source of truth).
+    if (dbc_runtime_load_from_sd_root())
+    {
+        Serial.printf("[DBC] Loaded runtime DBC from %s\r\n", dbc_runtime_loaded_path());
+    }
+    else
+    {
+        Serial.println("[DBC] No root .dbc found; using built-in decode table");
+    }
 
     // Load saved settings from SD
     load_settings();
